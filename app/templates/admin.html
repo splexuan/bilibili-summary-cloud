@@ -13,16 +13,64 @@
   .setting-item {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: 14px;
     padding: 11px 0;
     border-bottom: 1px solid var(--border);
   }
   .setting-item:last-child { border-bottom: none; padding-bottom: 0; }
 
-  .setting-info { flex: 1; min-width: 0; }
-  .setting-info .name { font-size: 13px; color: var(--ink-800); font-weight: 500; }
-  .setting-info .desc { font-size: 11.5px; color: var(--ink-500); margin-top: 1px; }
-  .setting-input { width: 250px; flex-shrink: 0; }
+  /*
+   * 左侧文字区
+   *
+   * 这里的 min-width 是关键：默认 min-width:auto 会让 flex 子项
+   * 无法收缩到内容宽度以下，但同时 .setting-input 的 width:100%
+   * （来自 common.css 的 input[type=text]）会抢走全部空间，
+   * 把本区挤成 1 字宽 —— 表现就是中文标签「竖排成一行一个字」。
+   * 所以此处显式给一个可读的最小宽度 + 允许内部换行。
+   */
+  .setting-info {
+    flex: 1 1 auto;
+    min-width: 220px;
+    overflow-wrap: anywhere;
+  }
+  .setting-info .name {
+    font-size: 13px;
+    color: var(--ink-800);
+    font-weight: 500;
+    line-height: 1.5;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  /* 标签文字本身不该被拆行，短标签保持一行更整齐 */
+  .setting-info .name .txt { min-width: 0; }
+  .setting-info .desc {
+    font-size: 11.5px;
+    color: var(--ink-500);
+    margin-top: 2px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  /*
+   * 右侧输入框
+   *
+   * 必须覆盖 common.css 里的 `input[type="text"] { width: 100% }`，
+   * 否则它会按「卡片宽度的 100%」撑开，配合 flex-shrink:0 就把左边挤扁。
+   * 用 flex-basis 固定基准宽度、允许收缩，比写 width 更稳。
+   */
+  .setting-input {
+    flex: 0 1 260px;
+    width: auto;
+    min-width: 140px;
+    max-width: 260px;
+  }
+  /* 窄屏时改为上下堆叠，避免互相挤压 */
+  @media (max-width: 720px) {
+    .setting-item { flex-direction: column; align-items: stretch; gap: 8px; }
+    .setting-info { min-width: 0; }
+    .setting-input { flex: 1 1 auto; max-width: none; width: 100%; }
+  }
 
   .status-dot {
     width: 7px; height: 7px;
@@ -348,14 +396,11 @@ PAGES.config = async () => {
     const rows = keys.map(k => {
       const item = byKey[k];
       if (!item) return '';
-      const dot = item.is_set
-        ? `<span class="status-dot on"></span>`
-        : `<span class="status-dot off"></span>`;
       const src = item.source === 'env' ? '（来自环境变量）' : '';
       return `
         <div class="setting-item" data-key="${k}">
           <div class="setting-info">
-            <div class="name">${dot} ${escapeHtml(item.description)}</div>
+            <div class="name"><span class="status-dot ${item.is_set ? 'on' : 'off'}"></span><span class="txt">${escapeHtml(item.description)}</span></div>
             <div class="desc mono">${k} ${src}</div>
           </div>
           <input class="setting-input ${item.is_secret ? 'secret' : ''}"
