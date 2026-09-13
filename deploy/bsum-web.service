@@ -1,0 +1,61 @@
+[Unit]
+Description=bilibili-summary-cloud Web (FastAPI/uvicorn)
+Documentation=file:///opt/bsum/README.md
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=bsum
+Group=bsum
+WorkingDirectory=/opt/bsum
+
+# 环境变量从 .env 读（app/core/config.py 会自动加载，这里不必重复）
+# 只放 systemd 层面需要的
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=Asia/Shanghai
+
+# 先跑 bootstrap（等库就绪 + 建表 + 管理员 + 默认配置），再起服务
+# bootstrap 是幂等的，每次重启都跑是安全的
+ExecStartPre=/opt/bsum/.venv/bin/python -m app.bootstrap
+ExecStart=/opt/bsum/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --proxy-headers \
+    --forwarded-allow-ips='127.0.0.1' \
+    --workers 1 \
+    --log-level info
+
+Restart=always
+RestartSec=5
+# 连续 5 次失败就停手，避免疯狂重启刷爆日志
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# ─── 安全加固 ───
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Web 层也可能调用 yt-dlp（比如拉封面），统一 HOME 到应用目录
+Environment=HOME=/opt/bsum/data
+Environment=XDG_CACHE_HOME=/opt/bsum/data/.cache
+# 只有数据目录可写
+ReadWritePaths=/opt/bsum/data /opt/bsum/temp /opt/bsum/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# ─── 资源限制（2 核 4G，给 Worker 留足余量）───
+MemoryMax=1G
+CPUQuota=120%
+
+StandardOutput=append:/opt/bsum/logs/web.log
+StandardError=append:/opt/bsum/logs/web.error.log
+
+[Install]
+WantedBy=multi-user.target

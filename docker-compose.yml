@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════
+# bilibili-summary-cloud 部署编排
+#
+# 启动：docker compose up -d
+# 日志：docker compose logs -f web worker
+#
+# Web 与 Worker 共用同一镜像，只是启动命令不同。
+# 需要扩容时：docker compose up -d --scale worker=3
+# ═══════════════════════════════════════════
+
+services:
+
+  # ─── 数据库 ───
+  postgres:
+    image: postgres:16-alpine
+    container_name: bsum-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bsum}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bsum_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-bilibili_summary}
+      TZ: Asia/Shanghai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bsum}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bsum
+
+  # ─── Redis（队列 + 进度广播）───
+  redis:
+    image: redis:7-alpine
+    container_name: bsum-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bsum
+
+  # ─── Web 服务 ───
+  web:
+    build: .
+    image: bsum-app:latest
+    container_name: bsum-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bsum}:${POSTGRES_PASSWORD:-bsum_pass}@postgres:5432/${POSTGRES_DB:-bilibili_summary}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-bsum}:${POSTGRES_PASSWORD:-bsum_pass}@postgres:5432/${POSTGRES_DB:-bilibili_summary}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bsum
+
+  # ─── Worker（重活在这儿跑）───
+  worker:
+    image: bsum-app:latest
+    build: .
+    restart: unless-stopped
+    # Worker 同样先跑 bootstrap（内部可重复执行，只会补缺失项），
+    # 避免 web 还没建完表 worker 就开始取任务。
+    command: sh -c "python -m app.bootstrap && exec python -m app.workers.worker"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-bsum}:${POSTGRES_PASSWORD:-bsum_pass}@postgres:5432/${POSTGRES_DB:-bilibili_summary}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-bsum}:${POSTGRES_PASSWORD:-bsum_pass}@postgres:5432/${POSTGRES_DB:-bilibili_summary}
+      REDIS_URL: redis://redis:6379/0
+      # 单容器内并发：默认 2，避免小规格机器被压垮
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # 等 web 健康再起，确保表结构与初始配置已就绪
+      web:
+        condition: service_healthy
+    # 转写走云端 ASR，本地只做下载与转码，CPU 需求不高
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1.5G
+    networks:
+      - bsum
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  bsum:
+    driver: bridge

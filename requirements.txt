@@ -1,0 +1,56 @@
+# ─── Web 框架 ───
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.12
+jinja2>=3.1
+
+# ─── 配置与校验 ───
+pydantic>=2.9
+pydantic-settings>=2.6
+
+# ─── 数据库 ───
+sqlalchemy>=2.0.36
+alembic>=1.14
+# 三种后端任选其一，装了不用也不占地方（都很小）
+# Postgres
+psycopg[binary]>=3.2
+asyncpg>=0.30
+# MySQL（宝塔面板用户走这条）
+aiomysql>=0.2.0
+pymysql>=1.1.1
+
+# ─── 队列 ───
+redis>=5.2
+rq>=2.1
+
+# ─── 鉴权 ───
+# 直接用 bcrypt，不用 passlib：
+# passlib 1.7.4 与 bcrypt 5.x 不兼容（依赖已移除的 __about__，
+# 且内部自检会对超 72 字节的探针密码抛 ValueError）。
+bcrypt>=4.2
+pyjwt>=2.10
+cryptography>=43.0
+
+# ─── 腾讯云 ───
+tencentcloud-sdk-python-asr>=3.0.1300
+cos-python-sdk-v5>=1.9.30
+
+# ─── 视频解析与处理 ───
+yt-dlp>=2024.12.13
+
+# ─── AI 与检索 ───
+requests>=2.32
+numpy>=1.26
+scikit-learn>=1.5
+joblib>=1.4
+rank-bm25>=0.2.2
+
+# ─── 工具 ───
+httpx>=0.27
+
+# ─── 开发/测试专用（生产不需要，可忽略安装失败）───
+# aiosqlite：本地不开 Postgres 也能跑（SQLite 后端）
+# fakeredis：测试里替掉真实 Redis
+# pytest：测试框架
+aiosqlite>=0.20
+fakeredis>=2.26

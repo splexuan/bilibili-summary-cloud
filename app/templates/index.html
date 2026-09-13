@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工作台 · B站视频总结</title>
+<link rel="icon" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  /* ─── 工作台专属样式 ─── */
+
+  .brand-icon {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--amber-400), var(--amber-600));
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; box-shadow: 0 2px 8px rgba(216, 146, 59, .28);
+  }
+  .brand-icon svg { width: 18px; height: 18px; fill: #fff; }
+
+  .sidebar-brand-row { display: flex; align-items: center; gap: 10px; }
+  .sidebar-brand-row h1 { font-size: 14.5px; }
+
+  /* 提交卡 */
+  .mode-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .mode-tab {
+    flex: 1; padding: 8px; text-align: center; font-size: 13px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: transparent; color: var(--ink-500);
+    font-family: inherit; font-weight: 500; cursor: pointer;
+    transition: all .15s;
+  }
+  .mode-tab:hover:not(.active) { border-color: var(--ink-400); color: var(--ink-700); }
+  .mode-tab.active {
+    border-color: var(--amber-400);
+    background: var(--amber-100);
+    color: var(--amber-700);
+  }
+
+  .url-row { display: flex; gap: 8px; }
+  .url-row input { flex: 1; }
+
+  /* 步骤条 */
+  .steps { list-style: none; }
+  .step { display: flex; gap: 11px; padding: 6px 0; position: relative; }
+  .step:not(:last-child)::after {
+    content: ''; position: absolute; left: 10px; top: 29px; bottom: 0;
+    width: 1.5px; background: var(--border); border-radius: 1px;
+    transition: background .3s;
+  }
+  .step.done:not(:last-child)::after,
+  .step.skipped:not(:last-child)::after { background: var(--green-600); }
+  .step.running:not(:last-child)::after { background: var(--amber-500); }
+  .step.error:not(:last-child)::after { background: var(--red-500); }
+
+  .step-dot {
+    width: 21px; height: 21px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; position: relative; z-index: 1;
+    background: var(--ink-100); color: var(--ink-500);
+    transition: all .3s;
+  }
+  .step.running .step-dot {
+    background: var(--amber-500); color: #fff;
+    box-shadow: 0 0 0 4px var(--amber-100);
+  }
+  .step.done .step-dot { background: var(--green-600); color: #fff; }
+  .step.skipped .step-dot { background: var(--ink-300); color: #fff; }
+  .step.error .step-dot { background: var(--red-500); color: #fff; }
+
+  .step-body { flex: 1; min-width: 0; padding-top: 1px; }
+  .step-title { font-size: 12.5px; font-weight: 500; color: var(--ink-800); }
+  .step-msg { font-size: 11.5px; color: var(--ink-500); margin-top: 1px; }
+  .step.running .step-msg { color: var(--amber-600); }
+  .step.done .step-msg { color: var(--green-600); }
+  .step.error .step-msg { color: var(--red-500); }
+
+  /* 视频信息条 */
+  .vid-info { display: none; gap: 11px; align-items: flex-start; }
+  .vid-info.show { display: flex; }
+  .vid-thumb {
+    width: 96px; aspect-ratio: 16/9; border-radius: var(--radius-sm);
+    background: var(--ink-100); overflow: hidden; flex-shrink: 0;
+    position: relative; cursor: pointer;
+  }
+  .vid-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .vid-detail { flex: 1; min-width: 0; }
+  .vid-detail h4 {
+    font-size: 13px; font-weight: 600; color: var(--ink-900);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .vid-detail .sub { font-size: 11.5px; color: var(--ink-500); margin-top: 2px; }
+
+  /* 结果区 */
+  .result-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .result-meta { font-size: 11.5px; color: var(--ink-500); margin-left: auto; }
+
+  .md {
+    font-size: 14px; line-height: 1.85; color: var(--ink-800);
+    word-wrap: break-word;
+  }
+  .md h1 { font-size: 19px; margin: 20px 0 10px; font-weight: 650; color: var(--ink-900); }
+  .md h2 {
+    font-size: 16px; margin: 22px 0 9px; font-weight: 650; color: var(--ink-900);
+    padding-left: 10px; border-left: 3px solid var(--amber-400);
+  }
+  .md h3 { font-size: 14.5px; margin: 16px 0 7px; font-weight: 600; color: var(--ink-800); }
+  .md h4 { font-size: 13.5px; margin: 13px 0 6px; font-weight: 600; color: var(--ink-700); }
+  .md p { margin: 9px 0; }
+  .md ul, .md ol { margin: 9px 0 9px 22px; }
+  .md li { margin: 4px 0; }
+  .md code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--amber-700);
+  }
+  .md pre {
+    background: var(--surface-2); padding: 13px; border-radius: var(--radius-sm);
+    overflow-x: auto; margin: 12px 0; border: 1px solid var(--border);
+  }
+  .md pre code { background: none; padding: 0; color: var(--ink-800); }
+  .md blockquote {
+    border-left: 3px solid var(--amber-300); padding: 2px 0 2px 13px;
+    margin: 11px 0; color: var(--ink-600);
+  }
+  .md table { border-collapse: collapse; margin: 12px 0; font-size: 13px; width: 100%; }
+  .md th, .md td { border: 1px solid var(--border); padding: 7px 10px; }
+  .md th { background: var(--surface-2); font-weight: 600; }
+  .md strong { color: var(--ink-900); font-weight: 650; }
+  .md a { color: var(--amber-600); }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+
+  /* 历史列表 */
+  .history-list { max-height: 520px; overflow-y: auto; }
+  .history-item {
+    display: flex; gap: 10px; padding: 9px 10px;
+    border-radius: var(--radius-sm); cursor: pointer;
+    transition: background .13s; position: relative;
+  }
+  .history-item:hover { background: var(--surface-2); }
+  .history-item.active { background: var(--amber-100); }
+  .hi-thumb {
+    width: 62px; aspect-ratio: 16/9; border-radius: 6px; flex-shrink: 0;
+    background: var(--ink-100); overflow: hidden;
+  }
+  .hi-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .hi-body { flex: 1; min-width: 0; }
+  .hi-title {
+    font-size: 12.5px; font-weight: 500; color: var(--ink-800);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .hi-meta { font-size: 11px; color: var(--ink-500); margin-top: 2px; }
+  .hi-tags { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+  .hi-tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 20px;
+    background: var(--ink-100); color: var(--ink-600);
+  }
+  .hi-tag.sum { background: var(--amber-100); color: var(--amber-700); }
+  .hi-tag.ts { background: var(--green-100); color: var(--green-600); }
+  .hi-btn-del {
+    opacity: 0; border: none; background: transparent; cursor: pointer;
+    color: var(--ink-400); font-size: 13px; padding: 2px 4px;
+    border-radius: 4px; flex-shrink: 0; align-self: flex-start;
+    transition: all .13s;
+  }
+  .history-item:hover .hi-btn-del { opacity: 1; }
+  .hi-btn-del:hover { background: var(--red-100); color: var(--red-500); }
+
+  /* 聊天面板 */
+  .chat-body {
+    height: 420px; overflow-y: auto; padding: 4px 2px;
+    display: flex; flex-direction: column; gap: 11px;
+  }
+  .chat-msg {
+    max-width: 88%; padding: 10px 13px; border-radius: var(--radius);
+    font-size: 13px; line-height: 1.75; word-wrap: break-word;
+  }
+  .chat-msg.user {
+    align-self: flex-end; background: var(--amber-100); color: var(--ink-900);
+    border-bottom-right-radius: 4px;
+  }
+  .chat-msg.ai {
+    align-self: flex-start; background: var(--surface-2);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-foot {
+    display: flex; gap: 8px; margin-top: 11px;
+    padding-top: 11px; border-top: 1px solid var(--border);
+  }
+  .chat-foot textarea { min-height: 42px; max-height: 120px; flex: 1; }
+
+  .source-tag {
+    display: inline-block; font-size: 11px; padding: 2px 8px;
+    background: var(--amber-100); color: var(--amber-700);
+    border-radius: 20px; margin: 4px 4px 0 0; cursor: pointer;
+  }
+
+  /* 用量条 */
+  .usage-bar { height: 5px; background: var(--ink-100); border-radius: 3px; overflow: hidden; }
+
+  @media (max-width: 1000px) {
+    .sidebar { position: static; height: auto; width: 100%; }
+    .app { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ═══ 侧边栏 ═══ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-row">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24"><path d="M17.8 3.2c-.9 0-1.7.4-2.3 1L12 7.7 8.5 4.2c-.6-.6-1.4-1-2.3-1C4.3 3.2 3 4.5 3 6.1c0 .9.4 1.7 1 2.3L6.8 11 4 13.8c-.6.6-1 1.4-1 2.3 0 1.6 1.3 2.9 2.9 2.9.9 0 1.7-.4 2.3-1L12 14.3l3.5 3.5c.6.6 1.4 1 2.3 1 1.6 0 2.9-1.3 2.9-2.9 0-.9-.4-1.7-1-2.3L17.2 11l2.8-2.8c.6-.6 1-1.4 1-2.3 0-1.6-1.3-2.7-3.2-2.7z"/></svg>
+        </div>
+        <div>
+          <h1>视频总结工具</h1>
+          <div class="ver" id="ver-label">云端版</div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-page="work" onclick="go('work')">
+        <span class="ico">◈</span> 总结工作台
+      </div>
+      <div class="nav-item" data-page="history" onclick="go('history')">
+        <span class="ico">▤</span> 我的内容
+      </div>
+      <div class="nav-item" data-page="chat" onclick="go('chat')">
+        <span class="ico">◐</span> 内容问答
+      </div>
+      <div class="nav-item" data-page="settings" onclick="go('settings')">
+        <span class="ico">⚙</span> 个人设置
+      </div>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="row-between">
+        <span id="whoami" class="truncate">—</span>
+        <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
+      </div>
+      <div class="row mt-1" style="gap:12px">
+        <a href="/knowledge" class="text-xs">知识库</a>
+        <a href="/admin" class="text-xs hidden" id="link-admin">后台</a>
+        <a href="#" class="text-xs" onclick="logout();return false">退出</a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══ 主区 ═══ -->
+  <main class="main">
+    <header class="topbar">
+      <h2 id="page-title">总结工作台</h2>
+      <div class="topbar-right">
+        <span class="text-xs muted" id="quota-label"></span>
+        <button class="btn btn-sm" onclick="refreshCurrent()">刷新</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div id="notice-bar" class="hidden"></div>
+      <div id="page-root">
+        <div class="empty"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<div id="modal-root"></div>
+
+<script src="/static/common.js"></script>
+<script>
+let ME = null;
+let CURRENT = 'work';
+let TASK = null;          // 当前任务 {jobId, es, stage}
+let VIEW = null;          // 当前查看的内容 {kind:'video'|'article', id, title, summary, transcript}
+let CHAT = { messages: [], es: null, kind: 'kb' };
+let MODEL_OK = false;     // marked 是否加载完成
+
+const TITLES = {
+  work: '总结工作台', history: '我的内容',
+  chat: '内容问答', settings: '个人设置',
+};
+
+/* ═══ 路由 ═══ */
+
+function go(page) {
+  CURRENT = page;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  document.getElementById('page-title').textContent = TITLES[page] || page;
+  history.replaceState(null, '', '#' + page);
+  render();
+}
+
+function refreshCurrent() {
+  if (CURRENT === 'work' && TASK) { toast('任务正在执行中'); return; }
+  render();
+}
+
+async function render() {
+  const c = document.getElementById('page-root');
+  c.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+  try {
+    await PAGES[CURRENT]();
+  } catch (ex) {
+    c.innerHTML = `<div class="empty">
+      <div class="ico">⚠</div><h3>加载失败</h3><p>${escapeHtml(ex.message)}</p>
+    </div>`;
+  }
+  loadQuota();
+}
+
+/* ═══ 初始化 ═══ */
+
+(async function init() {
+  try {
+    const d = await API.get('/api/auth/me');
+    ME = d.user;
+    document.getElementById('whoami').textContent = ME.display_name || ME.username;
+    if (ME.role === 'admin') document.getElementById('link-admin').classList.remove('hidden');
+    if (d.notice) {
+      const nb = document.getElementById('notice-bar');
+      nb.innerHTML = `<div class="card" style="border-left:3px solid var(--amber-500)">
+        <div class="text-sm">${escapeHtml(d.notice)}</div></div>`;
+      nb.classList.remove('hidden');
+    }
+  } catch (ex) {
+    // API 层已负责跳转到登录页
+    return;
+  }
+
+  try {
+    const cfg = await API.get('/api/config/public');
+    document.getElementById('ver-label').textContent = 'v' + cfg.version;
+  } catch (_) {}
+
+  // hash 路由
+  const h = (location.hash || '').replace('#', '');
+  go(TITLES[h] ? h : 'work');
+
+  // ?vid=xxx 直达某条内容
+  const p = new URLSearchParams(location.search);
+  const vid = p.get('vid');
+  if (vid) {
+    await openContent('video', parseInt(vid));
+    history.replaceState(null, '', '/');
+  }
+  const aid = p.get('aid');
+  if (aid) {
+    await openContent('article', parseInt(aid));
+    history.replaceState(null, '', '/');
+  }
+})();
+
+// marked 通过动态 import 加载，避免依赖外网 CDN
+import('https://cdn.jsdelivr.net/npm/marked/marked.min.js')
+  .then(m => { window.marked = m.marked || m; MODEL_OK = true; })
+  .catch(() => {
+    // 离线环境降级：纯文本按段落渲染
+    window.marked = { parse: (t) => '<p>' + escapeHtml(t).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>' };
+    MODEL_OK = true;
+  });
+
+function md(text) {
+  if (!text) return '';
+  return window.marked ? window.marked.parse(text) : escapeHtml(text);
+}
+
+/* ═══ 用量 ═══ */
+
+async function loadQuota() {
+  try {
+    const d = await API.get('/api/usage');
+    const q = d.asr_quota_sec || 0;
+    const used = d.asr_used_sec || 0;
+    const el = document.getElementById('quota-label');
+    if (q <= 0) {
+      el.textContent = `识别用量 ${(used / 3600).toFixed(1)}h`;
+    } else {
+      const left = Math.max(0, q - used);
+      el.textContent = `识别剩余 ${(left / 3600).toFixed(1)}h / ${(q / 3600).toFixed(1)}h`;
+    }
+  } catch (_) {}
+}
+
+/* ═══════════════════════════════════════════
+   页面：总结工作台
+   ═══════════════════════════════════════════ */
+
+const PAGES = {};
+let MODE = 'video';
+
+PAGES.work = async () => {
+  document.getElementById('page-root').innerHTML = `
+    <div class="grid grid-2" style="align-items:start">
+      <!-- 左：提交 -->
+      <div>
+        <div class="card">
+          <div class="mode-tabs">
+            <div class="mode-tab active" data-mode="video" onclick="switchMode('video')">视频链接</div>
+            <div class="mode-tab" data-mode="article" onclick="switchMode('article')">粘贴文章</div>
+          </div>
+
+          <div id="pane-video">
+            <div class="field">
+              <label>视频地址</label>
+              <div class="url-row">
+                <input type="text" id="video-url" placeholder="B站 / YouTube 链接，支持分享短链">
+                <button class="btn btn-primary" id="btn-start" onclick="startVideo()">开始</button>
+              </div>
+              <div class="hint">
+                B站链接需先在「个人设置」保存 Cookie，否则可能解析失败。
+              </div>
+            </div>
+          </div>
+
+          <div id="pane-article" class="hidden">
+            <div class="field">
+              <label>文章标题（可留空，自动提取）</label>
+              <input type="text" id="article-title" placeholder="留空则取正文首行">
+            </div>
+            <div class="field">
+              <label>原文链接（可选）</label>
+              <input type="text" id="article-url" placeholder="https://...">
+            </div>
+            <div class="field" style="border:none;padding:0;margin-bottom:10px">
+              <label>正文内容</label>
+              <textarea id="article-text" rows="9" placeholder="粘贴完整正文，内容越完整总结质量越好"></textarea>
+            </div>
+            <button class="btn btn-primary btn-block" id="btn-article" onclick="startArticle()">
+              开始总结
+            </button>
+          </div>
+        </div>
+
+        <div class="card hidden" id="progress-card">
+          <div class="card-head">
+            <div class="card-title"><span class="dot"></span> 处理进度</div>
+            <button class="btn btn-sm btn-danger hidden" id="btn-cancel" onclick="cancelTask()">取消</button>
+          </div>
+          <div class="progress mb-2">
+            <div class="progress-bar" id="prog-bar" style="width:0%"></div>
+          </div>
+          <ul class="steps">
+            <li class="step waiting" data-step="1">
+              <span class="step-dot">1</span>
+              <div class="step-body">
+                <div class="step-title">解析内容</div>
+                <div class="step-msg">等待中</div>
+              </div>
+            </li>
+            <li class="step waiting" data-step="2">
+              <span class="step-dot">2</span>
+              <div class="step-body">
+                <div class="step-title">获取音频</div>
+                <div class="step-msg">等待中</div>
+              </div>
+            </li>
+            <li class="step waiting" data-step="3">
+              <span class="step-dot">3</span>
+              <div class="step-body">
+                <div class="step-title">获取文字稿</div>
+                <div class="step-msg">等待中</div>
+              </div>
+            </li>
+            <li class="step waiting" data-step="4">
+              <span class="step-dot">4</span>
+              <div class="step-body">
+                <div class="step-title">AI 总结</div>
+                <div class="step-msg">等待中</div>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="card hidden" id="vid-card">
+          <div class="vid-info show">
+            <div class="vid-thumb" id="vid-thumb-box" onclick="openSourceLink()">
+              <img id="vid-thumb" src="" alt="" referrerpolicy="no-referrer">
+            </div>
+            <div class="vid-detail">
+              <h4 id="vid-title">—</h4>
+              <div class="sub" id="vid-meta">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：结果 -->
+      <div>
+        <div class="card" style="min-height:600px;display:flex;flex-direction:column">
+          <div class="card-head">
+            <div class="card-title"><span class="dot"></span> <span id="result-title">总结结果</span></div>
+          </div>
+
+          <div class="result-toolbar hidden" id="result-tools">
+            <button class="btn btn-sm" onclick="copySummary()">复制</button>
+            <button class="btn btn-sm" onclick="downloadSummary()">下载 MD</button>
+            <button class="btn btn-sm" onclick="viewTranscript()">查看文字稿</button>
+            <button class="btn btn-sm" onclick="chatAboutCurrent()">就此内容提问</button>
+            <span class="result-meta" id="result-meta"></span>
+          </div>
+
+          <div class="md" id="result-body" style="flex:1;overflow-y:auto;padding-top:12px"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const input = document.getElementById('video-url');
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') startVideo();
+  });
+
+  // 若之前有结果，回填
+  if (VIEW) paintResult();
+};
+
+function switchMode(mode) {
+  MODE = mode;
+  document.querySelectorAll('.mode-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.mode === mode);
+  });
+  document.getElementById('pane-video').classList.toggle('hidden', mode !== 'video');
+  document.getElementById('pane-article').classList.toggle('hidden', mode !== 'article');
+}
+
+function resetSteps() {
+  document.querySelectorAll('.step').forEach(el => {
+    el.className = 'step waiting';
+    el.querySelector('.step-msg').textContent = '等待中';
+  });
+  document.getElementById('prog-bar').style.width = '0%';
+}
+
+function updateStep(n, st, msg) {
+  const el = document.querySelector(`.step[data-step="${n}"]`);
+  if (!el) return;
+  el.className = `step ${st}`;
+  if (msg) el.querySelector('.step-msg').textContent = msg;
+  const bases = { 1: 5, 2: 25, 3: 60, 4: 85 };
+  if (st === 'done' && bases[n]) {
+    document.getElementById('prog-bar').style.width = (n === 4 ? 100 : bases[n] + 15) + '%';
+  } else if (bases[n]) {
+    document.getElementById('prog-bar').style.width = bases[n] + '%';
+  }
+}
+
+/* ─── 视频提交 ─── */
+
+async function startVideo() {
+  const input = document.getElementById('video-url');
+  let url = (input.value || '').trim();
+  if (!url) { input.focus(); return; }
+  if (TASK) { toast('已有任务在执行'); return; }
+
+  const isBili = /bilibili\.com|b23\.tv/.test(url);
+  if (isBili && !ME.has_bili_cookie && !ME.has_deepseek_key) {
+    // 仅提示，不阻断 —— 服务端可能配置了全局 Cookie
+  }
+
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('progress-card').classList.remove('hidden');
+  document.getElementById('result-tools').classList.add('hidden');
+  document.getElementById('result-body').innerHTML = '';
+  resetSteps();
+  updateStep(1, 'running', '提交任务…');
+
+  try {
+    const d = await API.post('/api/video', { url, force: false });
+    TASK = { jobId: d.job_id, es: null };
+    document.getElementById('btn-cancel').classList.remove('hidden');
+    subscribe(d.job_id);
+  } catch (ex) {
+    updateStep(1, 'error', ex.message);
+    err(ex.message);
+    document.getElementById('btn-start').disabled = false;
+    TASK = null;
+  }
+}
+
+/* ─── 文章提交 ─── */
+
+async function startArticle() {
+  const text = (document.getElementById('article-text').value || '').trim();
+  if (!text) { toast('请粘贴正文内容'); return; }
+  if (TASK) { toast('已有任务在执行'); return; }
+
+  document.getElementById('btn-article').disabled = true;
+  document.getElementById('progress-card').classList.remove('hidden');
+  document.getElementById('result-tools').classList.add('hidden');
+  document.getElementById('result-body').innerHTML = '';
+  resetSteps();
+  updateStep(1, 'done', '内容已接收');
+  updateStep(2, 'skipped', '无需下载');
+  updateStep(3, 'done', `正文 ${text.length} 字`);
+  updateStep(4, 'running', '总结中…');
+
+  try {
+    const d = await API.post('/api/article', {
+      text,
+      title: (document.getElementById('article-title').value || '').trim(),
+      url: (document.getElementById('article-url').value || '').trim(),
+    });
+    TASK = { jobId: d.job_id, es: null, kind: 'article', articleId: d.article_id };
+    document.getElementById('btn-cancel').classList.remove('hidden');
+    subscribe(d.job_id);
+  } catch (ex) {
+    updateStep(4, 'error', ex.message);
+    err(ex.message);
+    document.getElementById('btn-article').disabled = false;
+    TASK = null;
+  }
+}
+
+/* ─── 订阅进度 ─── */
+
+function subscribe(jobId) {
+  TASK.es = subscribeJob(jobId, {
+    onProgress: (p) => {
+      const stage = p.stage || '';
+      const msg = p.message || '';
+      const pct = p.progress;
+      if (typeof pct === 'number' && pct > 0) {
+        document.getElementById('prog-bar').style.width = Math.min(pct, 100) + '%';
+      }
+      mapStage(stage, msg);
+
+      // 阶段携带的内容信息
+      if (p.data && p.data.title) {
+        paintVideoInfo(p.data);
+      }
+    },
+    onEnd: async (d) => {
+      finishTask(true, d);
+    },
+    onError: (msg) => {
+      finishTask(false, { message: msg });
+    },
+  });
+}
+
+function mapStage(stage, msg) {
+  const m = {
+    queued:    [1, 'running', msg || '排队中…'],
+    parsing:   [1, 'running', msg || '解析中…'],
+    subtitle:  [3, 'running', msg || '提取字幕中…'],
+    downloading: [2, 'running', msg || '下载音频中…'],
+    transcoding: [2, 'running', msg || '音频转码中…'],
+    uploading: [2, 'running', msg || '上传音频中…'],
+    asr_submit:  [3, 'running', msg || '提交识别任务…'],
+    asr_polling: [3, 'running', msg || '语音识别中…'],
+    transcribing: [3, 'running', msg || '本地转写中…'],
+    summarizing: [4, 'running', msg || 'AI 总结中…'],
+    indexing:  [4, 'running', msg || '构建索引…'],
+  };
+  const hit = m[stage];
+  if (!hit) return;
+
+  const [n, st, text] = hit;
+  if (n > 1) { updateStep(1, 'done', '已解析'); }
+  if (n >= 2) { updateStep(2, n === 2 ? st : 'done', n === 2 ? text : '已获取'); }
+  if (n > 2) { updateStep(2, 'done', '已获取'); }
+  updateStep(n, st, text);
+}
+
+async function finishTask(success, payload) {
+  if (TASK && TASK.es) { TASK.es.close(); TASK.es = null; }
+
+  document.getElementById('btn-cancel').classList.add('hidden');
+  document.getElementById('btn-start').disabled = false;
+  const ab = document.getElementById('btn-article');
+  if (ab) ab.disabled = false;
+
+  if (success) {
+    updateStep(4, 'done', '完成');
+    document.getElementById('prog-bar').style.width = '100%';
+    toast('处理完成', 'ok');
+    loadQuota();
+
+    // 定位结果：文章任务用 article_id，视频任务用返回的 video_id
+    const vid = payload && payload.video_id;
+    const aid = (TASK && TASK.articleId) || (payload && payload.article_id);
+    TASK = null;
+
+    if (vid) await openContent('video', vid, true);
+    else if (aid) await openContent('article', aid, true);
+  } else {
+    const msg = (payload && payload.message) || '处理失败';
+    updateStep(4, 'error', msg);
+    err(msg);
+    TASK = null;
+  }
+}
+
+async function cancelTask() {
+  if (!TASK) return;
+  try {
+    const r = await API.post(`/api/job/${TASK.jobId}/cancel`, {});
+    toast(r.message);
+    if (TASK.es) TASK.es.close();
+    TASK = null;
+    document.getElementById('btn-cancel').classList.add('hidden');
+    document.getElementById('btn-start').disabled = false;
+    const ab = document.getElementById('btn-article');
+    if (ab) ab.disabled = false;
+  } catch (ex) { err(ex.message); }
+}
+
+function paintVideoInfo(info) {
+  document.getElementById('vid-card').classList.remove('hidden');
+  document.getElementById('vid-title').textContent = info.title || '—';
+  document.getElementById('vid-meta').textContent =
+    [info.uploader, info.duration_str || info.duration].filter(Boolean).join(' · ') || '—';
+  if (info.thumbnail) {
+    document.getElementById('vid-thumb').src = info.thumbnail;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   内容详情
+   ═══════════════════════════════════════════ */
+
+async function openContent(kind, id, stayInWork) {
+  try {
+    if (kind === 'video') {
+      const d = await API.get(`/api/videos/${id}`);
+      VIEW = {
+        kind: 'video', id: d.id, title: d.title, summary: d.summary,
+        hasTranscript: d.has_transcript, url: d.url,
+        uploader: d.uploader, duration: d.duration_str,
+        thumbnail: d.thumbnail, processedAt: d.processed_at,
+        transcriptSource: d.transcript_source,
+      };
+    } else {
+      const d = await API.get(`/api/articles/${id}`);
+      VIEW = {
+        kind: 'article', id: d.id, title: d.title, summary: d.summary,
+        url: d.url, processedAt: d.processed_at,
+      };
+    }
+
+    if (!stayInWork) {
+      CURRENT = 'detail';
+      document.getElementById('page-title').textContent = VIEW.title || '内容详情';
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      await renderDetail();
+    } else {
+      // 在工作台内直接填充右侧
+      if (CURRENT !== 'work') {
+        CURRENT = 'work';
+        go('work');
+      } else {
+        paintResult();
+      }
+    }
+  } catch (ex) {
+    err(ex.message);
+  }
+}
+
+async function renderDetail() {
+  const root = document.getElementById('page-root');
+  root.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <span class="dot"></span>
+          <span id="d-title">${escapeHtml(VIEW.title || '')}</span>
+        </div>
+        <button class="btn btn-sm" onclick="go('work')">返回工作台</button>
+      </div>
+      <div class="text-xs muted mb-2" id="d-meta"></div>
+      <div class="result-toolbar" style="border-top:none;padding-top:0">
+        <button class="btn btn-sm" onclick="copySummary()">复制</button>
+        <button class="btn btn-sm" onclick="downloadSummary()">下载 MD</button>
+        <button class="btn btn-sm hidden" id="d-btn-ts" onclick="viewTranscript()">查看文字稿</button>
+        <button class="btn btn-sm" onclick="chatAboutCurrent()">就此内容提问</button>
+      </div>
+      <div class="md mt-2" id="d-body"></div>
+    </div>
+  `;
+
+  const meta = [];
+  if (VIEW.kind === 'video') {
+    if (VIEW.uploader) meta.push(VIEW.uploader);
+    if (VIEW.duration) meta.push(VIEW.duration);
+    if (VIEW.transcriptSource) meta.push('文字稿来源：' + (VIEW.transcriptSource === 'asr' ? '语音识别' : '字幕'));
+  }
+  if (VIEW.processedAt) meta.push('处理于 ' + VIEW.processedAt);
+  document.getElementById('d-meta').textContent = meta.join(' · ');
+
+  if (VIEW.hasTranscript) document.getElementById('d-btn-ts').classList.remove('hidden');
+
+  document.getElementById('d-body').innerHTML = VIEW.summary
+    ? md(VIEW.summary)
+    : '<div class="empty"><div class="ico">◌</div><h3>暂无总结</h3><p>该内容还没有生成 AI 总结</p></div>';
+}
+
+function paintResult() {
+  if (!VIEW) return;
+  const box = document.getElementById('result-title');
+  const body = document.getElementById('result-body');
+  const tools = document.getElementById('result-tools');
+  if (!box || !body) return;
+
+  box.textContent = VIEW.title || '总结结果';
+  tools.classList.remove('hidden');
+  document.getElementById('result-meta').textContent = VIEW.processedAt || '';
+
+  const tsBtn = tools.querySelector('[onclick="viewTranscript()"]');
+  if (tsBtn) tsBtn.classList.toggle('hidden', !VIEW.hasTranscript);
+
+  body.innerHTML = VIEW.summary
+    ? md(VIEW.summary)
+    : '<div class="empty"><div class="ico">◌</div><h3>暂无总结</h3></div>';
+
+  if (VIEW.kind === 'video' && (VIEW.thumbnail || VIEW.uploader || VIEW.duration)) {
+    paintVideoInfo({
+      title: VIEW.title, uploader: VIEW.uploader,
+      duration_str: VIEW.duration, thumbnail: VIEW.thumbnail,
+    });
+    document.getElementById('vid-card').classList.remove('hidden');
+  }
+}
+
+function openSourceLink() {
+  if (VIEW && VIEW.url) window.open(VIEW.url, '_blank');
+}
+
+/* ─── 工具动作 ─── */
+
+function copySummary() {
+  if (!VIEW || !VIEW.summary) { toast('没有可复制的内容'); return; }
+  navigator.clipboard.writeText(VIEW.summary)
+    .then(() => ok('已复制到剪贴板'))
+    .catch(() => err('复制失败，请手动选择'));
+}
+
+async function downloadSummary() {
+  if (!VIEW) return;
+  const path = VIEW.kind === 'video'
+    ? `/api/chat/export/video/${VIEW.id}`
+    : `/api/chat/export/article/${VIEW.id}`;
+
+  try {
+    const resp = await fetch(path, { headers: API.headers() });
+    if (!resp.ok) throw new Error('导出失败');
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (VIEW.title || 'summary') + '.md';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (ex) { err(ex.message); }
+}
+
+async function viewTranscript() {
+  if (!VIEW) return;
+  if (VIEW.kind !== 'video') { toast('文章没有文字稿'); return; }
+  if (VIEW.transcript != null) { showTranscriptModal(VIEW.transcript); return; }
+
+  try {
+    const d = await API.get(`/api/videos/${VIEW.id}/transcript`);
+    VIEW.transcript = d.transcript || '';
+    showTranscriptModal(VIEW.transcript);
+  } catch (ex) { err(ex.message); }
+}
+
+function showTranscriptModal(text) {
+  showModal({
+    title: '文字稿',
+    width: 720,
+    body: `<div class="text-xs muted mb-2">${text.length} 字 · ${
+      VIEW.transcriptSource === 'asr' ? '语音识别' : '视频字幕'
+    }</div>
+    <div style="max-height:60vh;overflow-y:auto;font-size:13px;line-height:1.85;white-space:pre-wrap"
+      >${escapeHtml(text)}</div>`,
+    buttons: [{ text: '关闭', onclick: 'closeModal()' }],
+  });
+}
+
+function chatAboutCurrent() {
+  if (!VIEW) return;
+  CHAT = { messages: [], es: null, kind: VIEW.kind, contentId: VIEW.id };
+  go('chat');
+}
+
+/* ═══════════════════════════════════════════
+   页面：我的内容
+   ═══════════════════════════════════════════ */
+
+PAGES.history = async () => {
+  document.getElementById('page-root').innerHTML = `
+    <div class="card">
+      <div class="mode-tabs" style="max-width:280px">
+        <div class="mode-tab active" data-htype="video" onclick="switchHistoryType('video')">视频</div>
+        <div class="mode-tab" data-htype="article" onclick="switchHistoryType('article')">文章</div>
+      </div>
+      <div class="url-row">
+        <input type="text" id="hist-search" placeholder="搜索标题或 UP 主…">
+        <button class="btn" onclick="loadHistory(1)">搜索</button>
+      </div>
+    </div>
+    <div id="hist-root">
+      <div class="empty"><div class="spinner"></div></div>
+    </div>
+  `;
+
+  const si = document.getElementById('hist-search');
+  si.addEventListener('keydown', e => { if (e.key === 'Enter') loadHistory(1); });
+
+  await loadHistory(1);
+};
+
+let HIST = { type: 'video', page: 1, items: [], hasMore: false, loading: false };
+
+function switchHistoryType(t) {
+  HIST.type = t;
+  document.querySelectorAll('[data-htype]').forEach(b => {
+    b.classList.toggle('active', b.dataset.htype === t);
+  });
+  const si = document.getElementById('hist-search');
+  si.placeholder = t === 'article' ? '搜索文章标题…' : '搜索标题或 UP 主…';
+  si.value = '';
+  loadHistory(1);
+}
+
+async function loadHistory(page) {
+  if (HIST.loading) return;
+  HIST.loading = true;
+  const root = document.getElementById('hist-root');
+
+  if (page === 1) root.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+
+  const search = (document.getElementById('hist-search') || {}).value || '';
+  const isArticle = HIST.type === 'article';
+  const path = isArticle ? '/api/articles' : '/api/videos';
+
+  try {
+    const d = await API.get(
+      `${path}?page=${page}&page_size=20&search=${encodeURIComponent(search.trim())}`
+    );
+    HIST.page = d.page;
+    HIST.hasMore = d.has_more;
+    if (page === 1) HIST.items = d.items;
+    else HIST.items = HIST.items.concat(d.items);
+    paintHistory(d.total);
+  } catch (ex) {
+    root.innerHTML = `<div class="empty"><div class="ico">⚠</div><h3>加载失败</h3><p>${escapeHtml(ex.message)}</p></div>`;
+  } finally {
+    HIST.loading = false;
+  }
+}
+
+function paintHistory(total) {
+  const root = document.getElementById('hist-root');
+  const isArticle = HIST.type === 'article';
+
+  if (!HIST.items.length) {
+    root.innerHTML = `<div class="card"><div class="empty">
+      <div class="ico">◌</div>
+      <h3>还没有内容</h3>
+      <p>去工作台提交一个${isArticle ? '文章' : '视频'}试试</p>
+    </div></div>`;
+    return;
+  }
+
+  const rows = HIST.items.map(it => {
+    if (isArticle) {
+      return `
+        <div class="history-item" data-id="${it.id}">
+          <div class="hi-body" onclick="openContent('article', ${it.id})">
+            <div class="hi-title">${escapeHtml(it.title)}</div>
+            <div class="hi-meta">${it.processed_at || ''}</div>
+            <div class="hi-tags">
+              ${it.has_summary ? '<span class="hi-tag sum">总结</span>' : '<span class="hi-tag">未总结</span>'}
+            </div>
+          </div>
+          <button class="hi-btn-del" title="删除"
+            onclick="event.stopPropagation();deleteItem('article',${it.id})">✕</button>
+        </div>`;
+    }
+    return `
+      <div class="history-item" data-id="${it.id}">
+        <div class="hi-thumb">
+          ${it.thumbnail ? `<img src="${it.thumbnail}" alt="" referrerpolicy="no-referrer">` : ''}
+        </div>
+        <div class="hi-body" onclick="openContent('video', ${it.id})">
+          <div class="hi-title">${escapeHtml(it.title)}</div>
+          <div class="hi-meta">${escapeHtml(it.uploader || '')} · ${it.duration_str || ''}</div>
+          <div class="hi-tags">
+            ${it.has_summary ? '<span class="hi-tag sum">总结</span>' : '<span class="hi-tag">未总结</span>'}
+            ${it.transcript_source === 'asr' ? '<span class="hi-tag ts">识别</span>' : ''}
+          </div>
+        </div>
+        <button class="hi-btn-del" title="删除"
+          onclick="event.stopPropagation();deleteItem('video',${it.id})">✕</button>
+      </div>`;
+  }).join('');
+
+  root.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="dot"></span> 共 ${total} 条</div>
+      </div>
+      <div class="history-list">${rows}</div>
+      ${HIST.hasMore ? `<button class="btn btn-block mt-2" onclick="loadHistory(${HIST.page + 1})">加载更多</button>` : ''}
+    </div>
+  `;
+}
+
+async function deleteItem(kind, id) {
+  const path = kind === 'video' ? `/api/videos/${id}` : `/api/articles/${id}`;
+  const label = kind === 'video' ? '视频（含音频、文字稿与总结）' : '文章';
+  if (!confirm(`确定删除这条${label}？此操作不可恢复。`)) return;
+
+  try {
+    await API.del(path);
+    ok('已删除');
+    if (VIEW && VIEW.kind === kind && VIEW.id === id) VIEW = null;
+    loadHistory(1);
+  } catch (ex) { err(ex.message); }
+}
+
+/* ═══════════════════════════════════════════
+   页面：内容问答
+   ═══════════════════════════════════════════ */
+
+PAGES.chat = async () => {
+  const target = VIEW && CHAT.contentId === VIEW.id
+    ? `《${escapeHtml(VIEW.title)}》`
+    : '全部内容';
+
+  document.getElementById('page-root').innerHTML = `
+    <div class="card" style="display:flex;flex-direction:column">
+      <div class="card-head">
+        <div class="card-title"><span class="dot"></span> 基于 ${target} 提问</div>
+        <button class="btn btn-sm" onclick="resetChat()">新对话</button>
+      </div>
+      <div class="card-desc">
+        ${CHAT.contentId
+          ? '将针对当前这条内容的原文与总结检索作答。'
+          : '将先在你的知识库中粗筛相关内容，再对命中内容做原文精查，最后交给 AI 作答。'}
+      </div>
+
+      <div class="chat-body" id="chat-body"></div>
+
+      <div class="chat-foot">
+        <textarea id="chat-input" rows="1" placeholder="输入你的问题，Enter 发送，Shift+Enter 换行"></textarea>
+        <button class="btn btn-primary" id="chat-send" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  `;
+
+  const inp = document.getElementById('chat-input');
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  });
+  inp.addEventListener('input', () => {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+  });
+
+  paintChat();
+  inp.focus();
+};
+
+function paintChat() {
+  const body = document.getElementById('chat-body');
+  if (!body) return;
+
+  if (!CHAT.messages.length) {
+    body.innerHTML = `<div class="empty" style="margin:auto">
+      <div class="ico">◐</div>
+      <h3>开始提问</h3>
+      <p>${CHAT.contentId ? '例如：这条内容的核心结论是什么？' : '例如：我总结过的内容里，有哪些提到了成本控制？'}</p>
+    </div>`;
+    return;
+  }
+
+  body.innerHTML = CHAT.messages.map(m => {
+    if (m.role === 'user') {
+      return `<div class="chat-msg user">${escapeHtml(m.content)}</div>`;
+    }
+    if (m.role === 'system') return '';
+    return `<div class="chat-msg ai">
+      <div class="md">${m.rendered || md(m.content)}</div>
+      ${m.sources ? renderSources(m.sources) : ''}
+    </div>`;
+  }).join('');
+
+  body.scrollTop = body.scrollHeight;
+}
+
+function renderSources(sources) {
+  if (!sources || !sources.length) return '';
+  const tags = sources.map(s => {
+    const fn = s.type === 'video'
+      ? `openContent('video', ${s.id})`
+      : `openContent('article', ${s.id})`;
+    return `<span class="source-tag" onclick="${fn}">${escapeHtml(s.title)}</span>`;
+  }).join('');
+  return `<div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--border)">
+    <div class="text-xs muted mb-1">参考内容</div>${tags}</div>`;
+}
+
+function resetChat() {
+  if (CHAT.es) { CHAT.es.close(); CHAT.es = null; }
+  CHAT.messages = [];
+  paintChat();
+}
+
+async function sendChat() {
+  const inp = document.getElementById('chat-input');
+  const q = (inp.value || '').trim();
+  if (!q) { inp.focus(); return; }
+
+  inp.value = '';
+  inp.style.height = 'auto';
+
+  CHAT.messages.push({ role: 'user', content: q });
+  paintChat();
+
+  const body = document.getElementById('chat-body');
+  const holder = document.createElement('div');
+  holder.className = 'chat-msg ai';
+  holder.innerHTML = '<div class="text-sm muted"><span class="spinner"></span> 检索中…</div>';
+  body.appendChild(holder);
+  body.scrollTop = body.scrollHeight;
+
+  document.getElementById('chat-send').disabled = true;
+
+  const useOwn = !!CHAT.contentId;
+  const path = useOwn ? `/api/chat/video/${CHAT.contentId}` : '/api/chat/kb';
+
+  // 只带最近 6 轮，控制 token
+  const payload = {
+    messages: CHAT.messages.slice(-12).map(m => ({ role: m.role, content: m.content })),
+  };
+
+  let acc = '';
+  let sources = null;
+
+  try {
+    const resp = await fetch(path, {
+      method: 'POST',
+      headers: API.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+
+    if (resp.status === 401) { API.setToken(''); location.href = '/login'; return; }
+    if (!resp.ok) {
+      let msg = `请求失败 (${resp.status})`;
+      try { const j = await resp.json(); msg = j.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+
+      const blocks = buf.split('\n\n');
+      buf = blocks.pop() || '';
+
+      for (const block of blocks) {
+        const evMatch = block.match(/^event:\s*(.+)$/m);
+        const dataMatch = block.match(/^data:\s*(.+)$/m);
+        if (!dataMatch) continue;
+        const ev = evMatch ? evMatch[1].trim() : 'message';
+
+        let data;
+        try { data = JSON.parse(dataMatch[1]); } catch (_) { continue; }
+
+        if (ev === 'sources') {
+          sources = data.sources || [];
+        } else if (ev === 'delta') {
+          acc += data.text || '';
+          holder.innerHTML = `<div class="md">${md(acc)}</div>`;
+          body.scrollTop = body.scrollHeight;
+        } else if (ev === 'error') {
+          throw new Error(data.message || '回答失败');
+        }
+      }
+    }
+
+    if (!acc) acc = '（没有返回内容）';
+    CHAT.messages.push({ role: 'assistant', content: acc, rendered: md(acc), sources });
+    paintChat();
+
+    // 落库
+    try {
+      await API.post('/api/chat/history', {
+        kind: CHAT.contentId ? 'video' : 'kb',
+        video_id: CHAT.contentId || null,
+        messages: CHAT.messages.map(m => ({ role: m.role, content: m.content })),
+      });
+    } catch (_) {}
+  } catch (ex) {
+    holder.innerHTML = `<div class="text-sm" style="color:var(--red-500)">${escapeHtml(ex.message)}</div>`;
+  } finally {
+    const btn = document.getElementById('chat-send');
+    if (btn) btn.disabled = false;
+    const i2 = document.getElementById('chat-input');
+    if (i2) i2.focus();
+  }
+}
+
+/* ═══════════════════════════════════════════
+   页面：个人设置
+   ═══════════════════════════════════════════ */
+
+PAGES.settings = async () => {
+  const [st, stat] = await Promise.all([
+    API.get('/api/settings'),
+    API.get('/api/settings/stats').catch(() => null),
+  ]);
+
+  const ds = st.deepseek;
+  const ck = st.bili_cookie;
+
+  const dsSource = ds.source === 'self' ? '使用你自己的 Key'
+    : ds.source === 'global' ? '使用系统共享 Key'
+    : '未配置';
+
+  document.getElementById('page-root').innerHTML = `
+    <div class="grid grid-2" style="align-items:start">
+
+      <div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title"><span class="dot"></span> AI 服务</div>
+            <span class="badge ${ds.configured || ds.source === 'global' ? 'badge-green' : 'badge-amber'}">
+              ${dsSource}
+            </span>
+          </div>
+          <div class="card-desc">
+            ${st.allow_user_own_key
+              ? '你可以填写自己的 DeepSeek API Key，总结与问答将优先使用它，不占用系统额度。'
+              : '管理员已关闭自带 Key，所有请求使用系统共享 Key。'}
+          </div>
+
+          <div class="field">
+            <label>DeepSeek API Key</label>
+            <input type="password" id="s-ds"
+              placeholder="${ds.configured ? '已保存 ' + escapeHtml(ds.masked) : '留空表示不修改'}"
+              ${st.allow_user_own_key ? '' : 'disabled'}>
+            <div class="hint">仅存储密文，页面不会显示完整值。留空表示不修改。</div>
+          </div>
+
+          <div class="row" style="gap:8px">
+            <button class="btn btn-sm" onclick="saveSettings()">保存</button>
+            <button class="btn btn-sm" onclick="testDeepseek()">测试连接</button>
+            <button class="btn btn-sm btn-danger" onclick="clearCred('deepseek')">清除</button>
+          </div>
+          <div id="ds-msg" class="text-xs mt-2"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title"><span class="dot"></span> B站 Cookie</div>
+            <span class="badge ${ck.configured ? 'badge-green' : 'badge-gray'}">
+              ${ck.configured ? '已配置 ' + ck.length + ' 字符' : '未配置'}
+            </span>
+          </div>
+          <div class="card-desc">
+            部分视频（尤其是高清、番剧、会员内容）需要登录态才能解析。
+            从浏览器开发者工具复制完整 Cookie 字符串粘贴到这里。
+          </div>
+
+          <div class="field">
+            <label>Cookie 字符串</label>
+            <textarea id="s-ck" rows="4"
+              placeholder="${ck.configured ? '已保存 ' + escapeHtml(ck.masked) : 'SESSDATA=xxx; bili_jct=xxx; ...'}"></textarea>
+            <div class="hint">留空表示不修改。</div>
+          </div>
+
+          <div class="row" style="gap:8px">
+            <button class="btn btn-sm" onclick="saveSettings()">保存</button>
+            <button class="btn btn-sm btn-danger" onclick="clearCred('cookie')">清除</button>
+          </div>
+          <div id="ck-msg" class="text-xs mt-2"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-head"><div class="card-title"><span class="dot"></span> 我的用量</div></div>
+          <div class="grid grid-3" style="gap:10px">
+            <div class="stat" style="border:none;padding:0">
+              <div class="stat-label">视频</div>
+              <div class="stat-value">${stat ? stat.video_count : '—'}</div>
+            </div>
+            <div class="stat" style="border:none;padding:0">
+              <div class="stat-label">已总结</div>
+              <div class="stat-value">${stat ? stat.summary_count : '—'}</div>
+            </div>
+            <div class="stat" style="border:none;padding:0">
+              <div class="stat-label">语音识别</div>
+              <div class="stat-value">${stat ? stat.asr_count : '—'}</div>
+            </div>
+          </div>
+          <div class="mt-3">
+            <div class="row-between text-xs muted mb-1">
+              <span>本月识别额度</span>
+              <span id="q-text">—</span>
+            </div>
+            <div class="usage-bar"><div class="progress-bar" id="q-bar" style="width:0%"></div></div>
+            <div class="hint mt-1">
+              额度仅对「无字幕需语音识别」的视频消耗，有字幕的视频不占用。
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title"><span class="dot"></span> 账号</div></div>
+          <div class="field">
+            <label>登录账号</label>
+            <input type="text" value="${escapeHtml(ME.username)}" disabled>
+          </div>
+          <div class="field">
+            <label>显示名称</label>
+            <input type="text" value="${escapeHtml(ME.display_name || '')}" disabled>
+          </div>
+          <div class="field">
+            <label>新密码</label>
+            <input type="password" id="s-pw-old" placeholder="当前密码">
+          </div>
+          <div class="field">
+            <label>&nbsp;</label>
+            <input type="password" id="s-pw-new" placeholder="新密码（至少 6 位）">
+          </div>
+          <button class="btn btn-sm" onclick="changePassword()">修改密码</button>
+          <div id="pw-msg" class="text-xs mt-2"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 用量条
+  try {
+    const u = await API.get('/api/usage');
+    const q = u.asr_quota_sec || 0, used = u.asr_used_sec || 0;
+    const pct = q > 0 ? Math.min(100, used / q * 100) : 0;
+    document.getElementById('q-text').textContent = q > 0
+      ? `已用 ${fmtDuration(used)} / ${fmtDuration(q)}`
+      : `已用 ${fmtDuration(used)}（无限制）`;
+    const bar = document.getElementById('q-bar');
+    bar.style.width = pct + '%';
+    if (pct > 90) bar.className = 'progress-bar danger';
+    else if (pct > 70) bar.className = 'progress-bar warn';
+  } catch (_) {}
+};
+
+async function saveSettings() {
+  const dsEl = document.getElementById('s-ds');
+  const ckEl = document.getElementById('s-ck');
+  const payload = {};
+
+  if (dsEl && dsEl.value.trim()) payload.deepseek_key = dsEl.value.trim();
+  if (ckEl && ckEl.value.trim()) payload.bili_cookie = ckEl.value.trim();
+
+  if (!Object.keys(payload).length) { toast('没有需要保存的改动'); return; }
+
+  try {
+    const r = await API.put('/api/settings', payload);
+    ok(r.message);
+    ME = (await API.get('/api/auth/me')).user;
+    render();
+  } catch (ex) { err(ex.message); }
+}
+
+async function clearCred(which) {
+  const label = which === 'deepseek' ? 'DeepSeek Key' : 'B站 Cookie';
+  if (!confirm(`确定清除${label}？`)) return;
+  try {
+    const payload = which === 'deepseek' ? { clear_deepseek_key: true } : { clear_bili_cookie: true };
+    const r = await API.put('/api/settings', payload);
+    ok(r.message);
+    ME = (await API.get('/api/auth/me')).user;
+    render();
+  } catch (ex) { err(ex.message); }
+}
+
+async function testDeepseek() {
+  const box = document.getElementById('ds-msg');
+  box.innerHTML = '<span class="spinner"></span> 测试中…';
+  try {
+    const d = await API.post('/api/settings/test/deepseek', {});
+    box.innerHTML = d.ok
+      ? `<span style="color:var(--green-600)">✓ ${escapeHtml(d.message)}</span>`
+      : `<span style="color:var(--red-500)">✕ ${escapeHtml(d.message)}</span>`;
+  } catch (ex) {
+    box.innerHTML = `<span style="color:var(--red-500)">✕ ${escapeHtml(ex.message)}</span>`;
+  }
+}
+
+async function changePassword() {
+  const oldEl = document.getElementById('s-pw-old');
+  const newEl = document.getElementById('s-pw-new');
+  const box = document.getElementById('pw-msg');
+
+  if (!oldEl.value || !newEl.value) {
+    box.innerHTML = '<span style="color:var(--red-500)">请填写完整</span>';
+    return;
+  }
+  try {
+    const r = await API.post('/api/auth/password', {
+      old_password: oldEl.value, new_password: newEl.value,
+    });
+    box.innerHTML = `<span style="color:var(--green-600)">✓ ${escapeHtml(r.message)}</span>`;
+    oldEl.value = ''; newEl.value = '';
+  } catch (ex) {
+    box.innerHTML = `<span style="color:var(--red-500)">✕ ${escapeHtml(ex.message)}</span>`;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   弹窗
+   ═══════════════════════════════════════════ */
+
+function showModal({ title, body, buttons = [], width }) {
+  const root = document.getElementById('modal-root');
+  const style = width ? `style="max-width:${width}px"` : '';
+  root.innerHTML = `
+    <div class="modal-mask" onclick="if(event.target===this)closeModal()">
+      <div class="modal" ${style}>
+        <div class="modal-head">
+          <span>${escapeHtml(title)}</span>
+          <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">${body}</div>
+        ${buttons.length ? `<div class="modal-foot">${
+          buttons.map((b, i) =>
+            `<button class="btn ${b.primary ? 'btn-primary' : ''}" data-mi="${i}">${escapeHtml(b.text)}</button>`
+          ).join('')
+        }</div>` : ''}
+      </div>
+    </div>`;
+
+  buttons.forEach((b, i) => {
+    const el = root.querySelector(`[data-mi="${i}"]`);
+    if (el) el.onclick = () => { new Function(b.onclick)(); };
+  });
+}
+
+function closeModal() {
+  document.getElementById('modal-root').innerHTML = '';
+}
+</script>
+
+<style>
+  /* 弹窗样式补齐（common.css 未覆盖 modal-mask 场景） */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(20,17,12,.45);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; padding: 20px;
+  }
+  .modal {
+    background: var(--surface); border-radius: var(--radius-lg);
+    border: 1px solid var(--border); width: 100%; max-width: 480px;
+    max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-lg);
+  }
+  .modal-head {
+    padding: 15px 20px; border-bottom: 1px solid var(--border);
+    font-size: 14px; font-weight: 600; display: flex;
+    justify-content: space-between; align-items: center;
+  }
+  .modal-body { padding: 17px 20px; }
+  .modal-foot {
+    padding: 13px 20px; border-top: 1px solid var(--border);
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+</style>
+
+</body>
+</html>

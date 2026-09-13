@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · B站视频总结工具</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 15% 15%, var(--amber-100) 0%, transparent 45%),
+      radial-gradient(circle at 85% 80%, var(--amber-100) 0%, transparent 40%),
+      var(--bg);
+    padding: 20px;
+  }
+
+  .login-box {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px 30px 26px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .brand { text-align: center; margin-bottom: 26px; }
+
+  .brand .logo {
+    width: 46px; height: 46px;
+    border-radius: 13px;
+    background: linear-gradient(135deg, var(--amber-400), var(--amber-600));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 14px rgba(216, 146, 59, .3);
+  }
+
+  .brand h1 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink-900);
+    margin-bottom: 4px;
+  }
+
+  .brand p { font-size: 12.5px; color: var(--ink-500); }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--surface-2);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 20px;
+  }
+
+  .tab {
+    flex: 1;
+    text-align: center;
+    padding: 7px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--ink-600);
+    cursor: pointer;
+    transition: all .15s;
+    user-select: none;
+  }
+
+  .tab.active {
+    background: var(--surface);
+    color: var(--ink-900);
+    font-weight: 500;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .theme-btn {
+    position: fixed;
+    top: 18px; right: 18px;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink-600);
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .theme-btn:hover { background: var(--surface-2); }
+
+  .foot-note {
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--ink-400);
+    margin-top: 18px;
+    line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+
+<button class="theme-btn" data-theme-icon onclick="Theme.toggle()">☾</button>
+
+<div class="login-box">
+  <div class="brand">
+    <div class="logo">◈</div>
+    <h1>B站视频总结工具</h1>
+    <p>云端版 · 视频与文章 AI 总结</p>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="login" onclick="switchTab('login')">登录</div>
+    <div class="tab" data-tab="register" onclick="switchTab('register')">邀请码注册</div>
+  </div>
+
+  <!-- 登录 -->
+  <form id="login-form" onsubmit="doLogin(event)">
+    <div class="field">
+      <label>用户名</label>
+      <input type="text" id="login-username" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input type="password" id="login-password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block mt-2" id="login-btn">登录</button>
+  </form>
+
+  <!-- 注册 -->
+  <form id="register-form" class="hidden" onsubmit="doRegister(event)">
+    <div class="field">
+      <label>邀请码</label>
+      <input type="text" id="reg-code" placeholder="向管理员索取" required>
+    </div>
+    <div class="field">
+      <label>用户名</label>
+      <input type="text" id="reg-username" minlength="2" autocomplete="username" required>
+      <div class="hint">至少 2 个字符</div>
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input type="password" id="reg-password" minlength="6" autocomplete="new-password" required>
+      <div class="hint">至少 6 个字符</div>
+    </div>
+    <div class="field">
+      <label>昵称（可选）</label>
+      <input type="text" id="reg-display">
+    </div>
+    <button type="submit" class="btn btn-primary btn-block mt-2" id="reg-btn">注册并登录</button>
+  </form>
+
+  <div class="foot-note">
+    本地版功能完整迁移 · 数据存于你自己的服务器
+  </div>
+</div>
+
+<script src="/static/common.js"></script>
+<script>
+Theme.set(Theme.get());
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === name);
+  });
+  document.getElementById('login-form').classList.toggle('hidden', name !== 'login');
+  document.getElementById('register-form').classList.toggle('hidden', name !== 'register');
+}
+
+function nextUrl() {
+  const n = new URLSearchParams(location.search).get('next');
+  return n && n.startsWith('/') && !n.startsWith('//') ? n : '/';
+}
+
+function afterLogin(data) {
+  API.setToken(data.token);
+  location.href = data.user.role === 'admin' && nextUrl() === '/' ? '/admin' : nextUrl();
+}
+
+async function doLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 登录中';
+
+  try {
+    const data = await API.post('/api/auth/login', {
+      username: document.getElementById('login-username').value.trim(),
+      password: document.getElementById('login-password').value,
+    });
+    ok('登录成功');
+    setTimeout(() => afterLogin(data), 300);
+  } catch (ex) {
+    err(ex.message);
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+}
+
+async function doRegister(e) {
+  e.preventDefault();
+  const btn = document.getElementById('reg-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 注册中';
+
+  try {
+    const data = await API.post('/api/auth/register', {
+      invite_code: document.getElementById('reg-code').value.trim(),
+      username: document.getElementById('reg-username').value.trim(),
+      password: document.getElementById('reg-password').value,
+      display_name: document.getElementById('reg-display').value.trim(),
+    });
+    ok('注册成功');
+    setTimeout(() => { API.setToken(data.token); location.href = '/'; }, 400);
+  } catch (ex) {
+    err(ex.message);
+    btn.disabled = false;
+    btn.textContent = '注册并登录';
+  }
+}
+
+// 已登录则直接跳转
+if (API.token) {
+  API.get('/api/auth/me')
+    .then(() => { location.href = nextUrl(); })
+    .catch(() => API.setToken(''));
+}
+</script>
+</body>
+</html>

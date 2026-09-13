@@ -1,0 +1,59 @@
+[Unit]
+Description=bilibili-summary-cloud Worker (RQ)
+Documentation=file:///opt/bsum/README.md
+# 等 Web 起来再启动，确保表结构已经建好
+After=network-online.target postgresql.service redis-server.service bsum-web.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=bsum
+Group=bsum
+WorkingDirectory=/opt/bsum
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=Asia/Shanghai
+# 2 核机器给 2 个并发进程，一个下载/转码时另一个还能干活
+Environment=WORKER_CONCURRENCY=2
+
+ExecStartPre=/opt/bsum/.venv/bin/python -m app.bootstrap
+ExecStart=/opt/bsum/.venv/bin/python -m app.workers.worker
+
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# ─── 安全加固 ───
+# 注意：这里不能用 ProtectSystem=strict，因为 yt-dlp / ffmpeg
+# 需要在 /tmp 下写临时文件（tempfile.TemporaryDirectory）
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+# 关键：yt-dlp 默认往 $HOME/.cache/yt-dlp 写缓存。
+# 开 ProtectHome 后 $HOME 不可访问，下载会直接失败。
+# 所以把 HOME 指到应用目录内的可写位置，保持一致。
+ProtectHome=true
+Environment=HOME=/opt/bsum/data
+Environment=XDG_CACHE_HOME=/opt/bsum/data/.cache
+ReadWritePaths=/opt/bsum/data /opt/bsum/temp /opt/bsum/logs /tmp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# ─── 资源限制（重活都在这，给大头）───
+# 2 核 4G：Worker 给 2.5G，ffmpeg 转码是内存大户
+MemoryMax=2500M
+CPUQuota=180%
+# ffmpeg 单线程转码 + 下载，不需要太多线程
+TasksMax=64
+
+StandardOutput=append:/opt/bsum/logs/worker.log
+StandardError=append:/opt/bsum/logs/worker.error.log
+
+[Install]
+WantedBy=multi-user.target

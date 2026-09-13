@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理后台 · B站视频总结工具</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  .kv { display: flex; flex-direction: column; gap: 2px; }
+  .kv .k { font-size: 11.5px; color: var(--ink-500); }
+  .kv .v { font-size: 13px; font-family: var(--mono); color: var(--ink-900); }
+
+  .setting-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .setting-item:last-child { border-bottom: none; padding-bottom: 0; }
+
+  .setting-info { flex: 1; min-width: 0; }
+  .setting-info .name { font-size: 13px; color: var(--ink-800); font-weight: 500; }
+  .setting-info .desc { font-size: 11.5px; color: var(--ink-500); margin-top: 1px; }
+  .setting-input { width: 250px; flex-shrink: 0; }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .status-dot.on { background: var(--green-600); }
+  .status-dot.off { background: var(--ink-300); }
+  .status-dot.err { background: var(--red-500); }
+
+  .region-warn {
+    background: #FFF8E6;
+    border: 1px solid #F0DCA8;
+    border-radius: var(--radius-sm);
+    padding: 11px 13px;
+    font-size: 12.5px;
+    color: #8A5A12;
+    line-height: 1.65;
+  }
+  [data-theme="dark"] .region-warn {
+    background: #2B2416;
+    border-color: #4A3E20;
+    color: #E0BC72;
+  }
+
+  .modal-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 17, 12, .45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+
+  .modal {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 440px;
+    max-height: 88vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .modal-head {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-body { padding: 18px 20px; }
+  .modal-foot {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .pwd-reveal {
+    background: var(--amber-100);
+    border: 1px dashed var(--amber-400);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--amber-700);
+    margin-top: 10px;
+    word-break: break-all;
+    text-align: center;
+    user-select: all;
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ═══ 侧边栏 ═══ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>管理后台</h1>
+      <div class="ver">bilibili-summary-cloud</div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-page="overview" onclick="go('overview')">
+        <span class="ico">◫</span> 概览
+      </div>
+      <div class="nav-item" data-page="config" onclick="go('config')">
+        <span class="ico">⚙</span> 密钥配置
+      </div>
+      <div class="nav-item" data-page="users" onclick="go('users')">
+        <span class="ico">◉</span> 用户管理
+      </div>
+      <div class="nav-item" data-page="invites" onclick="go('invites')">
+        <span class="ico">✉</span> 邀请码
+      </div>
+      <div class="nav-item" data-page="videos" onclick="go('videos')">
+        <span class="ico">▤</span> 视频数据
+      </div>
+      <div class="nav-item" data-page="articles" onclick="go('articles')">
+        <span class="ico">▧</span> 文章数据
+      </div>
+      <div class="nav-item" data-page="jobs" onclick="go('jobs')">
+        <span class="ico">⇄</span> 任务队列
+      </div>
+      <div class="nav-item" data-page="usage" onclick="go('usage')">
+        <span class="ico">◐</span> 额度用量
+      </div>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="row-between">
+        <span id="whoami" class="truncate">—</span>
+        <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
+      </div>
+      <div class="row mt-1" style="gap:12px">
+        <a href="/" class="text-xs">去前台</a>
+        <a href="#" class="text-xs" onclick="logout();return false">退出</a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══ 主区 ═══ -->
+  <main class="main">
+    <header class="topbar">
+      <h2 id="page-title">概览</h2>
+      <div class="topbar-right">
+        <button class="btn btn-sm" onclick="refreshCurrent()">刷新</button>
+      </div>
+    </header>
+
+    <div class="content" id="content">
+      <div class="empty"><div class="spinner"></div></div>
+    </div>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+
+<script src="/static/common.js"></script>
+<script>
+let ME = null;
+let CURRENT = 'overview';
+const STATE = { page: {} };
+
+const TITLES = {
+  overview: '概览', config: '密钥配置', users: '用户管理',
+  invites: '邀请码', videos: '视频数据', articles: '文章数据',
+  jobs: '任务队列', usage: '额度用量',
+};
+
+/* ═══ 路由 ═══ */
+
+function go(page) {
+  CURRENT = page;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  document.getElementById('page-title').textContent = TITLES[page] || page;
+  history.replaceState(null, '', '#' + page);
+  render();
+}
+
+function refreshCurrent() { render(); }
+
+async function render() {
+  const c = document.getElementById('content');
+  c.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+  try {
+    await PAGES[CURRENT]();
+  } catch (ex) {
+    c.innerHTML = `<div class="empty">
+      <div class="ico">⚠</div><h3>加载失败</h3><p>${escapeHtml(ex.message)}</p>
+    </div>`;
+  }
+}
+
+/* ═══ 概览 ═══ */
+
+const PAGES = {};
+
+PAGES.overview = async () => {
+  const d = await API.get('/api/admin/overview');
+  const q = d.queue || {};
+  const pct = d.asr.usage_percent || 0;
+  const cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
+
+  document.getElementById('content').innerHTML = `
+    <div class="grid grid-4 mb-2">
+      <div class="stat">
+        <div class="stat-label">用户</div>
+        <div class="stat-value">${d.users.active}</div>
+        <div class="stat-sub">共 ${d.users.total} 个账号</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">视频</div>
+        <div class="stat-value">${d.content.videos}</div>
+        <div class="stat-sub">文章 ${d.content.articles} 篇</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">任务</div>
+        <div class="stat-value">${d.jobs.running}</div>
+        <div class="stat-sub">排队 ${d.jobs.pending} · 失败 ${d.jobs.error}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">本月识别</div>
+        <div class="stat-value">${(d.asr.used_sec / 3600).toFixed(1)}<span style="font-size:14px">h</span></div>
+        <div class="stat-sub">共 ${d.asr.total_count} 次</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="dot"></span> 语音识别额度（${d.asr.month}）</div>
+        <span class="badge ${pct > 90 ? 'badge-red' : pct > 70 ? 'badge-amber' : 'badge-green'}">${pct}%</span>
+      </div>
+      <div class="progress mb-2"><div class="progress-bar ${cls}" style="width:${Math.min(pct,100)}%"></div></div>
+      <div class="row-between text-sm muted">
+        <span>已用 ${fmtDuration(d.asr.used_sec)}</span>
+        <span>免费额度 ${fmtDuration(d.asr.quota_sec)}</span>
+      </div>
+      <div class="card-desc mt-2">
+       腾讯云录音文件识别每月赠送 10 小时免费额度，仅当月有效不结转。
+       额度耗尽后若未开启后付费，识别会直接失败并提示用户。
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-head"><div class="card-title"><span class="dot"></span> 任务队列</div></div>
+        <div class="grid grid-3" style="gap:10px">
+          <div><div class="kv"><span class="k">排队中</span><span class="v">${q.queued ?? '—'}</span></div></div>
+          <div><div class="kv"><span class="k">执行中</span><span class="v">${q.started ?? '—'}</span></div></div>
+          <div><div class="kv"><span class="k">失败</span><span class="v">${q.failed ?? '—'}</span></div></div>
+        </div>
+        <button class="btn btn-sm mt-2" onclick="requeue()">重排失败任务</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div class="card-title"><span class="dot"></span> 正在执行</div></div>
+        <div id="online-list"><div class="muted text-sm">加载中…</div></div>
+      </div>
+    </div>
+  `;
+
+  loadOnline();
+};
+
+async function loadOnline() {
+  const box = document.getElementById('online-list');
+  try {
+    const d = await API.get('/api/admin/online');
+    if (!d.items.length) {
+      box.innerHTML = '<div class="muted text-sm">当前没有正在执行的任务</div>';
+      return;
+    }
+    box.innerHTML = d.items.map(u => `
+      <div class="row-between" style="padding:6px 0">
+        <span class="text-sm">${escapeHtml(u.username)}</span>
+        <span class="text-xs muted">${u.jobs.map(j => j.type + ' · ' + j.status).join('，')}</span>
+      </div>
+    `).join('');
+  } catch (_) {
+    box.innerHTML = '<div class="muted text-sm">读取失败</div>';
+  }
+}
+
+async function requeue() {
+  try {
+    const r = await API.post('/api/admin/queue/requeue', {});
+    ok(r.message);
+    render();
+  } catch (ex) { err(ex.message); }
+}
+
+/* ═══ 密钥配置 ═══ */
+
+PAGES.config = async () => {
+  const d = await API.get('/api/admin/settings');
+  const groups = {
+    'AI 服务': ['deepseek_api_url', 'deepseek_model', 'deepseek_api_key', 'allow_user_own_key'],
+    '腾讯云语音识别': ['asr_secret_id', 'asr_secret_key', 'asr_region', 'asr_engine', 'asr_monthly_quota_sec'],
+    '腾讯云对象存储': ['cos_secret_id', 'cos_secret_key', 'cos_region', 'cos_bucket', 'cos_domain'],
+    '下载与代理': ['http_proxy', 'global_bili_cookie', 'ffmpeg_path'],
+    '业务开关': ['enable_asr', 'registration_open', 'site_notice'],
+  };
+  const byKey = {};
+  d.items.forEach(i => byKey[i.key] = i);
+
+  let html = `
+    <div class="card">
+      <div class="card-desc">
+        修改后立即生效，无需重启服务。密钥类配置以密文存储，
+        页面仅显示脱敏值，留空表示不修改。
+      </div>
+      <div class="row wrap" style="gap:8px">
+        <button class="btn btn-sm" onclick="testConn('asr')">测试语音识别</button>
+        <button class="btn btn-sm" onclick="testConn('cos')">测试对象存储</button>
+        <button class="btn btn-sm" onclick="testConn('deepseek')">测试 AI 服务</button>
+        <button class="btn btn-sm" onclick="checkRegion()">检查地域一致性</button>
+      </div>
+      <div id="test-result" class="mt-2"></div>
+    </div>
+  `;
+
+  for (const [group, keys] of Object.entries(groups)) {
+    const rows = keys.map(k => {
+      const item = byKey[k];
+      if (!item) return '';
+      const dot = item.is_set
+        ? `<span class="status-dot on"></span>`
+        : `<span class="status-dot off"></span>`;
+      const src = item.source === 'env' ? '（来自环境变量）' : '';
+      return `
+        <div class="setting-item" data-key="${k}">
+          <div class="setting-info">
+            <div class="name">${dot} ${escapeHtml(item.description)}</div>
+            <div class="desc mono">${k} ${src}</div>
+          </div>
+          <input class="setting-input ${item.is_secret ? 'secret' : ''}"
+                 data-key="${k}"
+                 placeholder="${item.is_set ? escapeHtml(item.value) : '未配置'}"
+                 type="text">
+        </div>`;
+    }).join('');
+
+    html += `
+      <div class="card">
+        <div class="card-head"><div class="card-title"><span class="dot"></span> ${group}</div></div>
+        ${rows || '<div class="muted text-sm">无配置项</div>'}
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="card">
+      <div class="row-between">
+        <div class="muted text-sm">共 ${d.items.length} 项配置，仅提交有改动的项</div>
+        <button class="btn btn-primary" onclick="saveSettings()">保存配置</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('content').innerHTML = html;
+};
+
+async function saveSettings() {
+  const items = {};
+  document.querySelectorAll('.setting-input').forEach(inp => {
+    const v = inp.value.trim();
+    if (v) items[inp.dataset.key] = v;
+  });
+
+  if (!Object.keys(items).length) {
+    toast('没有需要保存的改动');
+    return;
+  }
+
+  try {
+    const r = await API.put('/api/admin/settings', { items });
+    ok(r.message);
+    render();
+  } catch (ex) { err(ex.message); }
+}
+
+async function testConn(target) {
+  const box = document.getElementById('test-result');
+  box.innerHTML = `<span class="spinner"></span> <span class="text-sm muted">测试中…</span>`;
+  try {
+    const r = await API.post('/api/admin/settings/test', { target });
+    box.innerHTML = `<div class="${r.ok ? 'badge badge-green' : 'badge badge-red'}">${escapeHtml(r.message)}</div>`;
+  } catch (ex) {
+    box.innerHTML = `<div class="badge badge-red">${escapeHtml(ex.message)}</div>`;
+  }
+}
+
+async function checkRegion() {
+  const box = document.getElementById('test-result');
+  try {
+    const r = await API.get('/api/admin/settings/cos-check');
+    box.innerHTML = r.same_region
+      ? `<div class="badge badge-green">${escapeHtml(r.message)}</div>`
+      : `<div class="region-warn">${escapeHtml(r.message)}</div>`;
+  } catch (ex) {
+    box.innerHTML = `<div class="badge badge-red">${escapeHtml(ex.message)}</div>`;
+  }
+}
+
+/* ═══ 用户管理 ═══ */
+
+PAGES.users = async (page = 1, search = '') => {
+  STATE.page.users = { page, search };
+  const d = await API.get(`/api/admin/users?page=${page}&page_size=20&search=${encodeURIComponent(search)}`);
+
+  const rows = d.items.map(u => {
+    const quotaPct = u.asr_quota_sec ? Math.round(u.asr_used_sec / u.asr_quota_sec * 100) : 0;
+    return `
+    <tr>
+      <td>
+        <div style="font-weight:500">${escapeHtml(u.display_name)}</div>
+        <div class="text-xs muted mono">${escapeHtml(u.username)}</div>
+      </td>
+      <td>
+        <span class="badge ${u.role === 'admin' ? 'badge-amber' : 'badge-gray'}">
+          ${u.role === 'admin' ? '管理员' : '成员'}
+        </span>
+      </td>
+      <td><span class="badge ${u.is_active ? 'badge-green' : 'badge-red'}">${u.is_active ? '正常' : '禁用'}</span></td>
+      <td>
+        <div class="row" style="gap:4px">
+          <span class="status-dot ${u.has_deepseek_key ? 'on' : 'off'}" title="DeepSeek Key"></span>
+          <span class="status-dot ${u.has_bili_cookie ? 'on' : 'off'}" title="B站 Cookie"></span>
+        </div>
+      </td>
+      <td>
+        <div class="text-xs">${fmtDuration(u.asr_used_sec)} / ${fmtDuration(u.asr_quota_sec)}</div>
+        <div class="progress" style="margin-top:3px;width:90px">
+          <div class="progress-bar ${quotaPct > 90 ? 'danger' : ''}" style="width:${Math.min(quotaPct, 100)}%"></div>
+        </div>
+      </td>
+      <td class="mono text-sm">${u.video_count} / ${u.article_count}</td>
+      <td class="text-xs muted">${u.last_login_at || '从未登录'}</td>
+      <td>
+        <div class="actions">
+          <button class="btn btn-sm" onclick="editUser(${u.id})">编辑</button>
+          <button class="btn btn-sm btn-danger" onclick="delUser(${u.id}, '${escapeHtml(u.username)}')">删除</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <input type="text" id="user-search" placeholder="搜索用户名或昵称"
+               value="${escapeHtml(search)}" style="max-width:260px"
+               onkeydown="if(event.key==='Enter')PAGES.users(1,this.value)">
+        <button class="btn btn-primary btn-sm" onclick="newUser()">新建用户</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>用户</th><th>角色</th><th>状态</th><th>凭证</th>
+            <th>本月识别</th><th>视频/文章</th><th>最后登录</th><th>操作</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="8"><div class="empty"><p>暂无用户</p></div></td></tr>'}</tbody>
+        </table>
+      </div>
+      ${pager(d, (p) => PAGES.users(p, STATE.page.users.search))}
+    </div>
+  `;
+};
+
+function newUser() {
+  showModal('新建用户', `
+    <div class="field">
+      <label>用户名</label>
+      <input type="text" id="nu-username" required>
+    </div>
+    <div class="field">
+      <label>初始密码</label>
+      <input type="text" id="nu-password" placeholder="留空则自动生成">
+    </div>
+    <div class="field">
+      <label>昵称</label>
+      <input type="text" id="nu-display">
+    </div>
+    <div class="field">
+      <label>角色</label>
+      <select id="nu-role">
+        <option value="member">成员</option>
+        <option value="admin">管理员</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>月度识别额度（秒）</label>
+      <input type="number" id="nu-quota" value="0" min="0">
+      <div class="hint">0 表示使用全局默认额度（10 小时）</div>
+    </div>
+  `, async () => {
+    const r = await API.post('/api/admin/users', {
+      username: document.getElementById('nu-username').value.trim(),
+      password: document.getElementById('nu-password').value,
+      display_name: document.getElementById('nu-display').value.trim(),
+      role: document.getElementById('nu-role').value,
+      asr_quota_sec: parseInt(document.getElementById('nu-quota').value) || 0,
+    });
+    closeModal();
+    showModal('用户已创建', `
+      <div class="text-sm">请将以下信息发送给用户，密码只显示这一次：</div>
+      <div class="pwd-reveal">${escapeHtml(r.username)} / ${escapeHtml(r.password)}</div>
+    `, null, '知道了');
+    return true;
+  });
+}
+
+async function editUser(id) {
+  const d = await API.get(`/api/admin/users?page=1&page_size=100`);
+  const u = d.items.find(x => x.id === id);
+  if (!u) return err('用户不存在');
+
+  showModal('编辑用户 · ' + u.username, `
+    <div class="field">
+      <label>昵称</label>
+      <input type="text" id="eu-display" value="${escapeHtml(u.display_name)}">
+    </div>
+    <div class="field">
+      <label>角色</label>
+      <select id="eu-role">
+        <option value="member" ${u.role === 'member' ? 'selected' : ''}>成员</option>
+        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>管理员</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>状态</label>
+      <select id="eu-active">
+        <option value="true" ${u.is_active ? 'selected' : ''}>正常</option>
+        <option value="false" ${!u.is_active ? 'selected' : ''}>禁用</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>月度识别额度（秒）</label>
+      <input type="number" id="eu-quota" value="${u.asr_quota_sec}" min="0">
+      <div class="hint">当前已用 ${fmtDuration(u.asr_used_sec)}</div>
+    </div>
+    <div class="field">
+      <label class="row" style="cursor:pointer">
+        <input type="checkbox" id="eu-ownkey" ${u.can_use_own_key ? 'checked' : ''} style="width:auto">
+        <span>允许使用自带 API Key</span>
+      </label>
+    </div>
+    <div class="field">
+      <button class="btn btn-sm" onclick="resetPwd(${id})">重置密码</button>
+      <button class="btn btn-sm" onclick="resetUsage(${id})">重置用量统计</button>
+    </div>
+  `, async () => {
+    await API.put(`/api/admin/users/${id}`, {
+      display_name: document.getElementById('eu-display').value.trim(),
+      role: document.getElementById('eu-role').value,
+      is_active: document.getElementById('eu-active').value === 'true',
+      asr_quota_sec: parseInt(document.getElementById('eu-quota').value) || 0,
+      can_use_own_key: document.getElementById('eu-ownkey').checked,
+    });
+    ok('已更新');
+    return true;
+  });
+}
+
+async function resetPwd(id) {
+  if (!confirm('确定重置该用户密码？')) return;
+  const r = await API.put(`/api/admin/users/${id}`, { reset_password: true });
+  closeModal();
+  showModal('密码已重置', `
+    <div class="text-sm">请将新密码发送给用户：</div>
+    <div class="pwd-reveal">${escapeHtml(r.message.replace('密码已重置为：', ''))}</div>
+  `, null, '知道了');
+}
+
+async function resetUsage(id) {
+  if (!confirm('确定重置该用户本月的识别用量统计？')) return;
+  const r = await API.post(`/api/admin/users/${id}/reset-usage`, {});
+  ok(r.message);
+}
+
+async function delUser(id, name) {
+  if (!confirm(`确定删除用户「${name}」？\n该用户的全部视频、文章、对话数据将一并删除，且不可恢复。`)) return;
+  try {
+    const r = await API.del(`/api/admin/users/${id}`);
+    ok(r.message);
+    render();
+  } catch (ex) { err(ex.message); }
+}
+
+/* ═══ 邀请码 ═══ */
+
+PAGES.invites = async () => {
+  const d = await API.get('/api/admin/invites');
+
+  const rows = d.items.map(c => {
+    const full = c.used_count >= c.max_uses;
+    const dead = full || c.expired;
+    return `
+    <tr>
+      <td class="mono" style="font-size:13px;user-select:all">${escapeHtml(c.code)}</td>
+      <td><span class="badge ${dead ? 'badge-gray' : 'badge-green'}">${dead ? (c.expired ? '已过期' : '已用尽') : '可用'}</span></td>
+      <td class="text-sm">${c.used_count} / ${c.max_uses}</td>
+      <td class="text-xs muted">${c.expires_at || '永久'}</td>
+      <td class="text-xs muted">${escapeHtml(c.note) || '—'}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="delInvite(${c.id})">删除</button></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-desc" style="margin:0">
+          用户凭邀请码注册。可在「密钥配置」中关闭注册开关。
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="newInvite()">生成邀请码</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>邀请码</th><th>状态</th><th>已用</th><th>有效期至</th><th>备注</th><th>操作</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6"><div class="empty"><p>暂无邀请码</p></div></td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+};
+
+function newInvite() {
+  showModal('生成邀请码', `
+    <div class="field">
+      <label>可使用次数</label>
+      <input type="number" id="ni-uses" value="1" min="1" max="100">
+    </div>
+    <div class="field">
+      <label>有效期（天）</label>
+      <input type="number" id="ni-days" value="7" min="1" max="365">
+    </div>
+    <div class="field">
+      <label>备注</label>
+      <input type="text" id="ni-note" placeholder="例如：给老王">
+    </div>
+  `, async () => {
+    const r = await API.post('/api/admin/invites', {
+      max_uses: parseInt(document.getElementById('ni-uses').value) || 1,
+      expires_days: parseInt(document.getElementById('ni-days').value) || 7,
+      note: document.getElementById('ni-note').value.trim(),
+    });
+    closeModal();
+    showModal('邀请码已生成', `
+      <div class="text-sm">发给朋友即可注册：</div>
+      <div class="pwd-reveal">${escapeHtml(r.code)}</div>
+    `, null, '知道了');
+    return true;
+  });
+}
+
+async function delInvite(id) {
+  if (!confirm('确定删除该邀请码？')) return;
+  await API.del(`/api/admin/invites/${id}`);
+  ok('已删除');
+  render();
+}
+
+/* ═══ 视频数据 ═══ */
+
+PAGES.videos = async (page = 1, search = '') => {
+  STATE.page.videos = { page, search };
+  const d = await API.get(`/api/admin/videos?page=${page}&page_size=20&search=${encodeURIComponent(search)}`);
+
+  const rows = d.items.map(v => `
+    <tr>
+      <td>
+        <div class="truncate" style="max-width:340px;font-weight:500" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
+        <div class="text-xs muted">${escapeHtml(v.uploader)} · <span class="mono">${escapeHtml(v.vid)}</span></div>
+      </td>
+      <td class="text-sm">${escapeHtml(v.username)}</td>
+      <td>
+        <span class="badge ${v.transcript_source === 'asr' ? 'badge-blue' : v.transcript_source === 'subtitle' ? 'badge-green' : 'badge-gray'}">
+          ${v.transcript_source === 'asr' ? '语音识别' : v.transcript_source === 'subtitle' ? '字幕' : '—'}
+        </span>
+      </td>
+      <td class="text-sm mono">${v.duration_str || '—'}</td>
+      <td class="text-sm">${v.has_summary ? `<span class="badge badge-green">${v.summary_len} 字</span>` : '<span class="badge badge-gray">无</span>'}</td>
+      <td class="text-xs muted">${v.processed_at}</td>
+      <td>
+        <div class="actions">
+          <button class="btn btn-sm" onclick="viewVideo(${v.id})">详情</button>
+          <button class="btn btn-sm btn-danger" onclick="delVideo(${v.id})">删除</button>
+        </div>
+      </td>
+    </tr>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <input type="text" placeholder="搜索标题或UP主" value="${escapeHtml(search)}"
+               style="max-width:260px" onkeydown="if(event.key==='Enter')PAGES.videos(1,this.value)">
+        <div class="text-sm muted">共 ${d.total} 条</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>视频</th><th>所属用户</th><th>转写来源</th><th>时长</th>
+            <th>总结</th><th>处理时间</th><th>操作</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="7"><div class="empty"><p>暂无数据</p></div></td></tr>'}</tbody>
+        </table>
+      </div>
+      ${pager(d, (p) => PAGES.videos(p, STATE.page.videos.search))}
+    </div>
+  `;
+};
+
+async function viewVideo(id) {
+  const v = await API.get(`/api/admin/videos/${id}`);
+  showModal('视频详情', `
+    <div class="field">
+      <label>标题</label>
+      <div class="text-sm">${escapeHtml(v.title)}</div>
+    </div>
+    <div class="grid grid-2" style="gap:10px">
+      <div class="kv"><span class="k">UP主</span><span class="v">${escapeHtml(v.uploader)}</span></div>
+      <div class="kv"><span class="k">所属用户</span><span class="v">${escapeHtml(v.owner)}</span></div>
+      <div class="kv"><span class="k">平台</span><span class="v">${escapeHtml(v.platform)}</span></div>
+      <div class="kv"><span class="k">时长</span><span class="v">${escapeHtml(v.duration_str)}</span></div>
+      <div class="kv"><span class="k">转写来源</span><span class="v">${escapeHtml(v.transcript_source || '—')}</span></div>
+      <div class="kv"><span class="k">处理时间</span><span class="v">${escapeHtml(v.processed_at)}</span></div>
+    </div>
+    <div class="field mt-2">
+      <label>原文转写（${(v.transcript || '').length} 字）</label>
+      <textarea readonly style="height:170px;font-size:12px">${escapeHtml((v.transcript || '').slice(0, 4000))}</textarea>
+    </div>
+    <div class="field">
+      <label>总结（${(v.summary || '').length} 字）</label>
+      <textarea readonly style="height:230px;font-size:12px">${escapeHtml(v.summary || '（无）')}</textarea>
+    </div>
+  `, null, '关闭');
+}
+
+async function delVideo(id) {
+  if (!confirm('确定删除该视频记录及其总结？')) return;
+  const r = await API.del(`/api/admin/videos/${id}`);
+  ok(r.message);
+  render();
+}
+
+/* ═══ 文章数据 ═══ */
+
+PAGES.articles = async (page = 1, search = '') => {
+  STATE.page.articles = { page, search };
+  const d = await API.get(`/api/admin/articles?page=${page}&page_size=20&search=${encodeURIComponent(search)}`);
+
+  const rows = d.items.map(a => `
+    <tr>
+      <td><div class="truncate" style="max-width:400px">${escapeHtml(a.title)}</div></td>
+      <td class="text-sm">${escapeHtml(a.username)}</td>
+      <td class="text-sm">${a.summary_len ? `<span class="badge badge-green">${a.summary_len} 字</span>` : '<span class="badge badge-gray">无</span>'}</td>
+      <td class="text-xs muted">${a.processed_at}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="delArticle(${a.id})">删除</button></td>
+    </tr>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <input type="text" placeholder="搜索标题" value="${escapeHtml(search)}"
+               style="max-width:260px" onkeydown="if(event.key==='Enter')PAGES.articles(1,this.value)">
+        <div class="text-sm muted">共 ${d.total} 条</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>标题</th><th>所属用户</th><th>总结</th><th>处理时间</th><th>操作</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5"><div class="empty"><p>暂无数据</p></div></td></tr>'}</tbody>
+        </table>
+      </div>
+      ${pager(d, (p) => PAGES.articles(p, STATE.page.articles.search))}
+    </div>
+  `;
+};
+
+async function delArticle(id) {
+  if (!confirm('确定删除该文章记录？')) return;
+  const r = await API.del(`/api/admin/articles/${id}`);
+  ok(r.message);
+  render();
+}
+
+/* ═══ 任务队列 ═══ */
+
+PAGES.jobs = async (page = 1, status = '') => {
+  STATE.page.jobs = { page, status };
+  const d = await API.get(`/api/admin/jobs?page=${page}&page_size=20&status=${status}`);
+
+  const STATUS_MAP = {
+    pending: ['badge-gray', '排队'],
+    running: ['badge-blue', '执行中'],
+    done: ['badge-green', '完成'],
+    error: ['badge-red', '失败'],
+    canceled: ['badge-gray', '已取消'],
+  };
+
+  const rows = d.items.map(j => {
+    const [cls, label] = STATUS_MAP[j.status] || ['badge-gray', j.status];
+    return `
+    <tr>
+      <td class="mono text-sm">#${j.id}</td>
+      <td class="text-sm">${escapeHtml(j.type_label)}</td>
+      <td class="text-sm">${escapeHtml(j.username)}</td>
+      <td><span class="badge ${cls}">${label}</span></td>
+      <td class="text-xs mono">${escapeHtml(j.stage || '—')}</td>
+      <td class="text-xs muted">${j.created_at}</td>
+      <td class="text-xs" style="max-width:220px">
+        ${j.error ? `<span style="color:var(--red-500)">${escapeHtml(j.error.slice(0, 90))}</span>` : '—'}
+      </td>
+      <td><button class="btn btn-sm btn-danger" onclick="delJob(${j.id})">删除</button></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="tab-bar mb-2">
+        ${['', 'running', 'pending', 'done', 'error'].map(s => `
+          <button class="btn btn-sm ${status === s ? 'btn-primary' : ''}"
+                  onclick="PAGES.jobs(1,'${s}')">${s === '' ? '全部' : STATUS_MAP[s] ? STATUS_MAP[s][1] : s}</button>
+        `).join('')}
+        <button class="btn btn-sm" onclick="requeue()">重排失败任务</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>类型</th><th>用户</th><th>状态</th><th>阶段</th><th>创建</th><th>错误</th><th>操作</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="8"><div class="empty"><p>暂无任务</p></div></td></tr>'}</tbody>
+        </table>
+      </div>
+      ${pager(d, (p) => PAGES.jobs(p, STATE.page.jobs.status))}
+    </div>
+  `;
+};
+
+async function delJob(id) {
+  if (!confirm('确定删除该任务记录？')) return;
+  await API.del(`/api/admin/jobs/${id}`);
+  ok('已删除');
+  render();
+}
+
+/* ═══ 额度用量 ═══ */
+
+PAGES.usage = async () => {
+  const d = await API.get('/api/admin/usage');
+
+  const rows = d.items.map(u => {
+    const pct = u.usage_percent || 0;
+    return `
+    <tr>
+      <td class="text-sm" style="font-weight:500">${escapeHtml(u.username)}</td>
+      <td>
+        <div class="text-xs">${fmtDuration(u.asr_seconds)} / ${u.quota_str}</div>
+        <div class="progress" style="margin-top:3px;width:110px">
+          <div class="progress-bar ${pct > 90 ? 'danger' : pct > 70 ? 'warn' : ''}" style="width:${Math.min(pct,100)}%"></div>
+        </div>
+      </td>
+      <td class="text-sm mono">${pct}%</td>
+      <td class="text-sm">${u.asr_count}</td>
+      <td class="text-sm">${u.summary_count}</td>
+      <td class="text-sm mono">${(u.ai_tokens || 0).toLocaleString()}</td>
+      <td><button class="btn btn-sm" onclick="showUserUsage(${u.user_id}, '${escapeHtml(u.username)}')">历史</button></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="dot"></span> ${d.year_month} 用量明细</div>
+        <div class="text-sm muted">默认额度 ${fmtDuration(d.default_quota_sec)}/月</div>
+      </div>
+      <div class="card-desc">
+        语音识别时长按「识别成功的音频时长」计费，仅当月有效不结转。
+        云厂商的计数与本地统计可能存在细微差异，以控制台账单为准。
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>用户</th><th>本月识别用量</th><th>占比</th><th>识别次数</th>
+            <th>总结次数</th><th>AI Tokens</th><th>操作</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="7"><div class="empty"><p>本月暂无用量</p></div></td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+};
+
+async function showUserUsage(userId, username) {
+  const d = await API.get(`/api/admin/users/${userId}/usage`);
+  const rows = d.items.map(r => `
+    <tr>
+      <td class="text-sm mono">${r.year_month}</td>
+      <td class="text-sm">${r.asr_duration_str}</td>
+      <td class="text-sm">${r.asr_count}</td>
+      <td class="text-sm">${r.summary_count}</td>
+    </tr>`).join('');
+
+  showModal(`${username} · 历史用量`, `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>月份</th><th>识别时长</th><th>识别次数</th><th>总结次数</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4"><div class="empty"><p>暂无记录</p></div></td></tr>'}</tbody>
+      </table>
+    </div>
+    <button class="btn btn-sm mt-2" onclick="cleanupAudio()">清理残留音频文件</button>
+  `, null, '关闭');
+}
+
+async function cleanupAudio() {
+  try {
+    const r = await API.post('/api/admin/maintenance/cleanup-asr-audio', {});
+    toast(r.message, r.ok ? 'ok' : 'err');
+  } catch (ex) { err(ex.message); }
+}
+
+/* ═══ 分页 ═══ */
+
+function pager(d, onGo) {
+  if (d.total <= d.page_size) return '';
+  const totalPages = Math.ceil(d.total / d.page_size);
+  return `
+    <div class="row-between mt-2">
+      <div class="text-sm muted">第 ${d.page} / ${totalPages} 页，共 ${d.total} 条</div>
+      <div class="row">
+        <button class="btn btn-sm" ${d.page <= 1 ? 'disabled' : ''}
+                onclick="__goPage(${d.page - 1})">上一页</button>
+        <button class="btn btn-sm" ${!d.has_more ? 'disabled' : ''}
+                onclick="__goPage(${d.page + 1})">下一页</button>
+      </div>
+    </div>`;
+}
+
+let __pagerFn = null;
+function __setPager(fn) { __pagerFn = fn; }
+function __goPage(p) { if (__pagerFn) __pagerFn(p); }
+
+/* ═══ 弹窗 ═══ */
+
+let __modalConfirm = null;
+
+function showModal(title, bodyHtml, onConfirm, closeText = '取消') {
+  __modalConfirm = onConfirm;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-mask" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-head">
+          <span>${escapeHtml(title)}</span>
+          <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">${bodyHtml}</div>
+        <div class="modal-foot">
+          ${onConfirm ? `<button class="btn" onclick="closeModal()">取消</button>
+                         <button class="btn btn-primary" onclick="confirmModal()">确定</button>`
+                      : `<button class="btn btn-primary" onclick="closeModal()">${escapeHtml(closeText)}</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+function closeModal() {
+  document.getElementById('modal-root').innerHTML = '';
+  __modalConfirm = null;
+}
+
+async function confirmModal() {
+  if (!__modalConfirm) return closeModal();
+  try {
+    const keep = await __modalConfirm();
+    if (keep !== true) { closeModal(); render(); }
+  } catch (ex) {
+    err(ex.message);
+  }
+}
+
+/* ═══ 启动 ═══ */
+
+(async function init() {
+  try {
+    const me = await API.get('/api/auth/me');
+    ME = me.user;
+
+    if (ME.role !== 'admin') {
+      location.href = '/';
+      return;
+    }
+
+    document.getElementById('whoami').textContent = ME.display_name;
+
+    const hash = location.hash.replace('#', '');
+    go(TITLES[hash] ? hash : 'overview');
+  } catch (ex) {
+    location.href = '/login?next=' + encodeURIComponent('/admin');
+  }
+})();
+</script>
+</body>
+</html>
