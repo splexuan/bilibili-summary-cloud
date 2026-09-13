@@ -33,5 +33,14 @@ logs/
 .DS_Store
 
 # 临时调试产物（开发过程中随手写的脚本与输出，不入库）
+#
+# ⚠️ 注意这里必须排除 __init__.py！
+# `_*.py` 这个 glob 会连带匹配 `__init__.py`（下划线开头的 .py 文件），
+# 而它恰恰是 Python 包必需的。漏掉的后果是 clone 下来直接
+# `ImportError: cannot import name '__version__' from 'app'`。
+# 所有 __init__.py 一律强制入库。
 _*.py
+!_*/**
+!__init__.py
+!**/__init__.py
 _*.txt
