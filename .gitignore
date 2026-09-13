@@ -19,6 +19,9 @@ temp/
 cookies.txt
 proxy.txt
 
+# 运行期状态（bt_start.sh 写 PID 用）
+.run/
+
 # 模型与工具
 models/
 tools/
