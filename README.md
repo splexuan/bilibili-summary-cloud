@@ -286,6 +286,8 @@ tests/
 ├── verify.py               静态一致性校验
 ├── units.py                systemd unit 语法校验
 ├── mysql.py                MySQL 兼容性校验
+├── css_admin.py            后台页面 CSS 回归（防中文标签竖排）
+├── sse_fields.py           SSE 前后端字段名一致性校验
 ├── boot.py                 bootstrap 幂等性
 ├── smoke.py                HTTP 冒烟测试
 └── e2e.py                  端到端流水线测试
@@ -295,9 +297,14 @@ deploy/
 ├── bsum-web.service        Web 服务 unit
 ├── bsum-worker.service     Worker 服务 unit
 ├── nginx.conf              反向代理配置（含 SSE 关缓冲）
+├── run.sh                  前台调试启动（web / worker / bootstrap）
+├── bt_start.sh             宝塔单项目启动（Web exec 接管 + Worker 后台）
+├── bt_stop.sh              宝塔停止（含孤儿进程清理）
+├── doctor.py               一键排障体检（配置/进程/任务/Redis/日志）
 ├── README.md               裸机部署指南
 ├── 宝塔部署.md              宝塔面板部署要点速查（MySQL 版）
-└── 安装教程.md              从零开始的完整安装教程（宝塔 + MySQL，逐步验证）
+├── 安装教程.md              从零开始的完整安装教程（宝塔 + MySQL，逐步验证）
+└── 排障指南.md              报错去哪看：三处错误来源 + 按症状速查
 ```
 
 ---
@@ -313,6 +320,10 @@ deploy/
 | **COS 未配置导致列表接口 502** | COS 客户端惰性配置：构造不校验，只在真正上传/下载时才报错；`public_url` 未配置时返回空串，前端显示占位图 |
 | **SSE 被反向代理缓冲** | 响应头带 `X-Accel-Buffering: no`；Nginx 侧也要 `proxy_buffering off` |
 | **EventSource 无法自定义请求头** | token 通过 query param 传递（`/api/job/{id}/stream?token=...`） |
+| **前端进度字段名与后端不一致** | 后端 `set_progress()` 写的是 `percent`，前端曾误读 `p.progress`，导致进度条静默失效。由 `tests/sse_fields.py` 守 |
+| **`Container` 内 `e.data` 为 undefined 时吞掉真实错误** | 前端 SSE `error` 处理曾无条件把消息覆盖成「连接中断」。现在优先用服务端 `message`，没有才给出可操作提示 |
+| **`.gitignore` 的 `_*.py` 会吃掉 `__init__.py`** | 加 `!__init__.py` / `!**/__init__.py` 反向规则。验证要查 `git ls-files`，不能只看本地文件 |
+| **后台设置项中文标签竖排** | 局部 `width:250px` 打不过全局 `input[type=text]{width:100%}`，须显式 `width:auto` + 给标签区 `min-width` 兜底 |
 | **Alembic 用异步 URL 跑 offline 模式** | `env.py` 里把 `+asyncpg` 转成 `+psycopg` 生成同步 URL |
 | **systemd `ProtectHome` 让 yt-dlp 挂掉** | yt-dlp 默认写 `$HOME/.cache/yt-dlp`。开 `ProtectHome=true` 后 `$HOME` 不可访问，下载直接失败。必须同时 `Environment=HOME=/opt/bsum/data` + `XDG_CACHE_HOME` |
 | **`rsync` 不是 Ubuntu 预装** | 最小化安装的 server 上没有 rsync。部署脚本里显式 `apt install rsync` |

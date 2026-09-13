@@ -147,8 +147,18 @@ function subscribeJob(jobId, handlers = {}) {
   });
 
   es.addEventListener('error', (e) => {
-    let msg = '连接中断';
-    try { msg = JSON.parse(e.data).message || msg; } catch (_) {}
+    // 服务端主动推的 error 事件会带 data；浏览器自身的网络错误则没有。
+    // 之前一律兜底成「连接中断」，把真实原因盖掉了，排障时很难受。
+    let msg = '';
+    if (e && typeof e.data === 'string' && e.data) {
+      try { msg = JSON.parse(e.data).message || ''; } catch (_) {}
+    }
+    if (!msg) {
+      // 没有服务端消息 → 是传输层断了。给出可操作的提示而不是一句「连接中断」。
+      msg = '与服务器的连接中断。任务可能仍在后台执行，'
+          + '可刷新页面到「我的内容」查看结果，或用 API 查询：'
+          + `/api/job/${jobId}`;
+    }
     handlers.onError && handlers.onError(msg);
     es.close();
   });

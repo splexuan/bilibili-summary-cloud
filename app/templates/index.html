@@ -627,15 +627,18 @@ function subscribe(jobId) {
     onProgress: (p) => {
       const stage = p.stage || '';
       const msg = p.message || '';
-      const pct = p.progress;
+      // 注意：服务端字段名是 percent（见 app/core/progress.py），
+      // 不是 progress —— 写错的话进度条只能靠 updateStep 按阶段跳。
+      const pct = p.percent;
       if (typeof pct === 'number' && pct > 0) {
         document.getElementById('prog-bar').style.width = Math.min(pct, 100) + '%';
       }
       mapStage(stage, msg);
 
-      // 阶段携带的内容信息
-      if (p.data && p.data.title) {
-        paintVideoInfo(p.data);
+      // 阶段携带的内容信息（服务端放在 extra 里）
+      const info = p.data || p.extra;
+      if (info && info.title) {
+        paintVideoInfo(info);
       }
     },
     onEnd: async (d) => {
