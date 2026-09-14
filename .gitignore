@@ -8,6 +8,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+# 切换解释器版本时留下的旧虚拟环境备份（如 .venv310.bak）
+# 动辄几百 MB，只占仓库体积，绝不入库
+.venv*/
 venv/
 .Python
 
@@ -21,6 +24,10 @@ proxy.txt
 
 # 运行期状态（bt_start.sh 写 PID 用）
 .run/
+
+# 宝塔 AI 项目管理面板的元数据（面板配置 / PID）
+# 内含本机域名、端口、绝对路径，换台机器就不成立，不入库
+.aiproject/
 
 # 模型与工具
 models/

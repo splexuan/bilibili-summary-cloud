@@ -372,3 +372,29 @@ python tests/e2e.py       # 端到端：入队 → 真 Worker 执行 → 校验�
 | 长任务 | 直接跑在请求线程 | Redis + RQ 队列，独立 Worker |
 | 并发限制 | 进程内计数 | 用户维度槽位 + Worker 池 |
 | ffmpeg | 硬编码 Windows 路径 | 容器内 `ffmpeg`，或 `FFMPEG_PATH` 指定 |
+
+---
+
+## 本机部署记录（宝塔 AI 项目）
+
+- 域名：`bsum.lexuan.love`（HTTP；HTTPS 证书待申请）
+- 面板项目：AI 项目 `bsum`（id=17），运行用户 `www`，主端口 `8000`
+- 启动/停止脚本：`deploy/bt_start.sh` / `deploy/bt_stop.sh`
+  > 宝塔以「启动命令自身的 PID」判定项目是否运行，故 Web 用 `exec` 前台接管
+  > （PID 即 uvicorn，端口检测对得上），Worker 作为独立后台进程。
+- Nginx：`/www/server/panel/vhost/nginx/ai_bsum.conf`（反代 `127.0.0.1:8000`，含 SSE 关缓冲）
+- 数据库：MySQL `bsum`（utf8mb4，用户 `bsum`，仅 127.0.0.1）；Redis：`127.0.0.1:6379`
+- 运行配置：`.env`（权限 600，已含随机 `SECRET_KEY` / `JWT_SECRET` / `ADMIN_PASSWORD`）
+- 日志：`logs/web.log`、`logs/worker.log`、`logs/app.log`、`logs/bootstrap.log`（面板「日志」按钮已指向前三个）
+- 运行时 PID：`.run/`（Web/Worker 的 pid 文件，供 `bt_stop.sh` 收尾；`.aiproject/bsum.pid` 由宝塔自己维护）
+- 依赖：`.venv`（基于 Python 3.12.13，面板运行时 `/www/server/pyporject_evn/versions/3.12.13`；
+  venv 内 `pip.conf` 已指向腾讯云镜像 `mirrors.cloud.tencent.com`，官方源在本机仅约 60 KB/s）
+  > 3.10 → 3.12 升级后旧环境备份 `.venv310.bak` 已在验证通过（服务、依赖、yt-dlp 均正常）后清理，
+  > 回滚只能靠重建：`bt_stop.sh` → `rm -rf .venv && python3 -m venv .venv` → 装依赖 → `bt_start.sh`
+
+> 维护：改代码后在面板重启 `bsum` 项目；依赖变更跑 `.venv/bin/pip install -r requirements.txt`；
+> 表结构变更跑 `.venv/bin/python -m app.bootstrap`（幂等）。
+> 注：8 个 `__init__.py` 已按上游 `main` 分支补齐（根因：`.gitignore` 的 `_*.py` glob 误把 `__init__.py` 排除了，上游已修复）。
+> 更新代码：`cd /www/wwwroot/bilibili-summary-cloud && git pull`。本仓库已设 `pull.rebase=true` + `rebase.autostash=true`，
+> 拉取时会自动暂存并恢复本段本地备注；另设了 `core.fileMode=false`，忽略面板部署造成的工作区权限位漂移（否则 git 会把 55 个文件误判为已修改而拒绝合并）。
+> 本机 `deploy/` 脚本与上游 `main` 已完全一致（此前提到的 `bt_start.sh` stdout 重定向差异已不存在）。
