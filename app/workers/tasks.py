@@ -503,23 +503,68 @@ async def _build_ai_client(db, user: User | None) -> DeepSeekClient:
     return DeepSeekClient(global_key, api_url, model)
 
 
+def _to_netscape_cookie(content: str, domain: str = ".bilibili.com") -> str:
+    """
+    把浏览器里复制的 Cookie 字符串（`k=v; k=v`）转成 yt-dlp 要求的形式。
+
+    yt-dlp 的 --cookies 只认 Netscape cookie 文件（7 列、Tab 分隔），
+    直接塞 `name=value; name=value` 会被判定 "invalid length 1" 整行跳过，
+    等同于没带 Cookie。已经是 Netscape 格式的内容原样返回。
+    """
+    text = (content or "").strip()
+    if not text:
+        return ""
+
+    # yt-dlp / 浏览器插件导出的标准文件，本身已可用
+    if "\t" in text and ("# Netscape" in text or "HTTP Cookie File" in text):
+        return text if text.endswith("\n") else text + "\n"
+
+    lines = [
+        "# Netscape HTTP Cookie File",
+        "# 由 bilibili-summary-cloud 自动生成，请勿手工编辑",
+        "",
+    ]
+    for part in text.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, _, value = part.partition("=")
+        name, value = name.strip(), value.strip()
+        if not name:
+            continue
+        # domain  include_subdomains  path  secure  expiry  name  value
+        # expiry=0 表示会话 Cookie，yt-dlp 接受
+        lines.append("\t".join([domain, "TRUE", "/", "TRUE", "0", name, value]))
+
+    if len(lines) <= 3:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
 async def _resolve_cookie_file(db, user: User | None) -> str:
     """
-    Cookie 优先级：用户自带 > 全局文件。
-    用户 Cookie 从密文解出后写入临时文件供 yt-dlp 使用。
+    Cookie 优先级：用户自带 > 全局兜底。
+    取到的原始字符串统一转成 Netscape 格式后落盘，供 yt-dlp 使用。
     """
+    content = ""
+    filename = "global.txt"
+
     if user and user.bili_cookie_enc:
         from app.core.security import decrypt_secret
 
-        content = decrypt_secret(user.bili_cookie_enc)
-        if content.strip():
-            path = settings.cookie_dir / f"user_{user.id}.txt"
-            path.write_text(content, encoding="utf-8")
-            return str(path)
+        content = decrypt_secret(user.bili_cookie_enc) or ""
+        filename = f"user_{user.id}.txt"
 
-    return await get_setting(db, "global_bili_cookie", "") and str(
-        settings.cookie_dir / "global.txt"
-    ) or ""
+    if not content.strip():
+        content = await get_setting(db, "global_bili_cookie", "") or ""
+
+    netscape = _to_netscape_cookie(content)
+    if not netscape:
+        return ""
+
+    path = settings.cookie_dir / filename
+    path.write_text(netscape, encoding="utf-8")
+    return str(path)
 
 
 async def _record_ai_usage(db, user_id: int, tokens: int) -> None:

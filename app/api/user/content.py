@@ -22,6 +22,7 @@ from app.core.progress import (
 )
 from app.core.queue import cancel_job, enqueue_summarize, get_queue
 from app.db.models import Article, Chat, Job, Video
+from app.db.session import AsyncSessionLocal
 from app.db.settings_repo import get_setting
 from app.services.cos_service import get_cos
 
@@ -182,9 +183,10 @@ async def job_stream(job_id: int, user: CurrentUser, db: DbSession):
                         return
 
                 # 检查数据库终态（防止 Redis 事件丢失）
-                async with db.session_factory() as check_db:  # type: ignore
-                    pass
-                cur = await db.get(Job, job_id)
+                # 必须用独立会话：请求级 session 的 identity map 会缓存 Job，
+                # 读不到 Worker 在其他会话里写入的最新状态
+                async with AsyncSessionLocal() as check_db:
+                    cur = await check_db.get(Job, job_id)
                 if cur and cur.status in (JobStatus.DONE, JobStatus.ERROR):
                     if cur.status == JobStatus.ERROR:
                         yield _sse("error", {"message": cur.error or "任务失败"})
