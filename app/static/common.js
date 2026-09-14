@@ -131,6 +131,80 @@ function fmtTime(s) {
 }
 
 
+/* ─── Markdown 渲染 ─── */
+
+// marked 是 UMD 包，由 /static/vendor/marked.min.js 用 <script> 标签引入，
+// 加载完成后自行挂到 window.marked。
+//
+// ⚠️ 不要改回 `import('.../marked.min.js')`：UMD 文件没有 ES Module 导出，
+// 动态 import 得到的是空模块命名空间（{}），`window.marked = m.marked || m`
+// 会把 UMD 已经正确设置好的全局对象覆盖成 {}，
+// 之后每次调用都抛 "window.marked.parse is not a function"，
+// 表现就是「任务显示完成但正文空白」「点开内容报错」。
+
+/** 兜底渲染：marked 未就绪时按纯文本分段，至少保证内容可见 */
+function mdFallback(text) {
+  return '<p>' + escapeHtml(text)
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>') + '</p>';
+}
+
+function md(text) {
+  if (text == null || text === '') return '';
+  const s = String(text);
+  const m = window.marked;
+  return (m && typeof m.parse === 'function') ? m.parse(s) : mdFallback(s);
+}
+
+
+/* ─── 剪贴板 ─── */
+
+/**
+ * 复制文本，返回是否成功。
+ *
+ * ⚠️ Clipboard API 只在**安全上下文**（HTTPS / localhost）暴露。本站点是 HTTP
+ * 部署，`navigator.clipboard` 是 undefined，直接调
+ * `navigator.clipboard.writeText(...)` 会同步抛 TypeError —— 它连 Promise 都
+ * 没返回，后面的 .catch() 根本执行不到，用户看到的就是「点了没反应」。
+ * 所以先判存在，再回退到 execCommand 方案（HTTP 下可用）。
+ */
+async function copyText(text) {
+  const s = text == null ? '' : String(text);
+  if (!s) return false;
+
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(s);
+      return true;
+    } catch (_) { /* 用户拒绝授权等 → 走兜底 */ }
+  }
+  return legacyCopy(s);
+}
+
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-9999px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+
+  const sel = document.getSelection();
+  const prev = (sel && sel.rangeCount) ? sel.getRangeAt(0) : null;
+
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);   // iOS Safari 需要
+
+  let done = false;
+  try { done = document.execCommand('copy'); } catch (_) { done = false; }
+
+  ta.remove();
+  if (prev && sel) { sel.removeAllRanges(); sel.addRange(prev); }
+  return done;
+}
+
+
 /* ─── SSE 客户端 ─── */
 
 function subscribeJob(jobId, handlers = {}) {
@@ -139,6 +213,11 @@ function subscribeJob(jobId, handlers = {}) {
 
   es.addEventListener('progress', (e) => {
     try { handlers.onProgress && handlers.onProgress(JSON.parse(e.data)); } catch (_) {}
+  });
+
+  // AI 总结正文增量（服务端边生成边追加，e.data.text 是已生成的全文）
+  es.addEventListener('summary', (e) => {
+    try { handlers.onSummary && handlers.onSummary(JSON.parse(e.data)); } catch (_) {}
   });
 
   es.addEventListener('end', (e) => {

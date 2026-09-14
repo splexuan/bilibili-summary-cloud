@@ -196,12 +196,24 @@
     border-radius: 20px; margin: 4px 4px 0 0; cursor: pointer;
   }
 
-  /* 用量条 */
-  .usage-bar { height: 5px; background: var(--ink-100); border-radius: 3px; overflow: hidden; }
+  /* 实时生成光标 */
+  .live-cursor {
+    display: inline-block; width: 7px; height: 15px; margin-left: 2px;
+    vertical-align: -2px; background: var(--amber-500);
+    animation: live-blink 1s steps(2, start) infinite;
+  }
+  @keyframes live-blink { to { visibility: hidden; } }
+
+  /* 识别额度条与其样式 .usage-bar 已移除（进度条样式在 common.css） */
 
   @media (max-width: 1000px) {
     .sidebar { position: static; height: auto; width: 100%; }
     .app { flex-direction: column; }
+
+    /* 窄屏（手机）恢复自然高度：小屏上"内部再套一条滚动条"极难操作，
+       让整页自然滚动更顺手 */
+    .scroll-panel { height: auto; min-height: 0; }
+    .scroll-panel > .scroll-body { overflow-y: visible; }
   }
 </style>
 </head>
@@ -255,10 +267,6 @@
   <main class="main">
     <header class="topbar">
       <h2 id="page-title">总结工作台</h2>
-      <div class="topbar-right">
-        <span class="text-xs muted" id="quota-label"></span>
-        <button class="btn btn-sm" onclick="refreshCurrent()">刷新</button>
-      </div>
     </header>
 
     <div class="content">
@@ -273,6 +281,7 @@
 
 <div id="modal-root"></div>
 
+<script src="/static/vendor/marked.min.js"></script>
 <script src="/static/common.js"></script>
 <script>
 let ME = null;
@@ -280,7 +289,6 @@ let CURRENT = 'work';
 let TASK = null;          // 当前任务 {jobId, es, stage}
 let VIEW = null;          // 当前查看的内容 {kind:'video'|'article', id, title, summary, transcript}
 let CHAT = { messages: [], es: null, kind: 'kb' };
-let MODEL_OK = false;     // marked 是否加载完成
 
 const TITLES = {
   work: '总结工作台', history: '我的内容',
@@ -299,11 +307,6 @@ function go(page) {
   render();
 }
 
-function refreshCurrent() {
-  if (CURRENT === 'work' && TASK) { toast('任务正在执行中'); return; }
-  render();
-}
-
 async function render() {
   const c = document.getElementById('page-root');
   c.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
@@ -314,7 +317,6 @@ async function render() {
       <div class="ico">⚠</div><h3>加载失败</h3><p>${escapeHtml(ex.message)}</p>
     </div>`;
   }
-  loadQuota();
 }
 
 /* ═══ 初始化 ═══ */
@@ -359,36 +361,8 @@ async function render() {
   }
 })();
 
-// marked 通过动态 import 加载，避免依赖外网 CDN
-import('https://cdn.jsdelivr.net/npm/marked/marked.min.js')
-  .then(m => { window.marked = m.marked || m; MODEL_OK = true; })
-  .catch(() => {
-    // 离线环境降级：纯文本按段落渲染
-    window.marked = { parse: (t) => '<p>' + escapeHtml(t).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>' };
-    MODEL_OK = true;
-  });
-
-function md(text) {
-  if (!text) return '';
-  return window.marked ? window.marked.parse(text) : escapeHtml(text);
-}
-
-/* ═══ 用量 ═══ */
-
-async function loadQuota() {
-  try {
-    const d = await API.get('/api/usage');
-    const q = d.asr_quota_sec || 0;
-    const used = d.asr_used_sec || 0;
-    const el = document.getElementById('quota-label');
-    if (q <= 0) {
-      el.textContent = `识别用量 ${(used / 3600).toFixed(1)}h`;
-    } else {
-      const left = Math.max(0, q - used);
-      el.textContent = `识别剩余 ${(left / 3600).toFixed(1)}h / ${(q / 3600).toFixed(1)}h`;
-    }
-  } catch (_) {}
-}
+// Markdown 渲染由 common.js 的 md() 提供，
+// marked 本体走 /static/vendor/marked.min.js（自托管，不依赖外网 CDN）
 
 /* ═══════════════════════════════════════════
    页面：总结工作台
@@ -495,7 +469,7 @@ PAGES.work = async () => {
 
       <!-- 右：结果 -->
       <div>
-        <div class="card" style="min-height:600px;display:flex;flex-direction:column">
+        <div class="card scroll-panel">
           <div class="card-head">
             <div class="card-title"><span class="dot"></span> <span id="result-title">总结结果</span></div>
           </div>
@@ -504,11 +478,13 @@ PAGES.work = async () => {
             <button class="btn btn-sm" onclick="copySummary()">复制</button>
             <button class="btn btn-sm" onclick="downloadSummary()">下载 MD</button>
             <button class="btn btn-sm" onclick="viewTranscript()">查看文字稿</button>
+            <button class="btn btn-sm" onclick="speakSummary()">朗读</button>
+            <button class="btn btn-sm" onclick="resummarize()">重新总结</button>
             <button class="btn btn-sm" onclick="chatAboutCurrent()">就此内容提问</button>
             <span class="result-meta" id="result-meta"></span>
           </div>
 
-          <div class="md" id="result-body" style="flex:1;overflow-y:auto;padding-top:12px"></div>
+          <div class="md scroll-body" id="result-body" style="padding-top:12px"></div>
         </div>
       </div>
     </div>
@@ -569,7 +545,10 @@ async function startVideo() {
   document.getElementById('btn-start').disabled = true;
   document.getElementById('progress-card').classList.remove('hidden');
   document.getElementById('result-tools').classList.add('hidden');
-  document.getElementById('result-body').innerHTML = '';
+  clearLiveSummary();
+  document.getElementById('result-body').innerHTML =
+    '<div class="empty" style="margin:auto"><div class="spinner"></div>'
+    + '<p class="text-xs muted">AI 开始生成后，正文会实时显示在这里</p></div>';
   resetSteps();
   updateStep(1, 'running', '提交任务…');
 
@@ -596,7 +575,10 @@ async function startArticle() {
   document.getElementById('btn-article').disabled = true;
   document.getElementById('progress-card').classList.remove('hidden');
   document.getElementById('result-tools').classList.add('hidden');
-  document.getElementById('result-body').innerHTML = '';
+  clearLiveSummary();
+  document.getElementById('result-body').innerHTML =
+    '<div class="empty" style="margin:auto"><div class="spinner"></div>'
+    + '<p class="text-xs muted">AI 开始生成后，正文会实时显示在这里</p></div>';
   resetSteps();
   updateStep(1, 'done', '内容已接收');
   updateStep(2, 'skipped', '无需下载');
@@ -641,6 +623,8 @@ function subscribe(jobId) {
         paintVideoInfo(info);
       }
     },
+    // AI 正文增量：边生成边显示，不用等整个流程结束
+    onSummary: (d) => paintLiveSummary(d.text || ''),
     onEnd: async (d) => {
       finishTask(true, d);
     },
@@ -648,6 +632,39 @@ function subscribe(jobId) {
       finishTask(false, { message: msg });
     },
   });
+}
+
+/* ─── 实时显字 ─── */
+
+function paintLiveSummary(text) {
+  const body = document.getElementById('result-body');
+  if (!body) return;
+  body.innerHTML = md(text) + '<span class="live-cursor"></span>';
+  body.scrollTop = body.scrollHeight;
+  const t = document.getElementById('result-title');
+  if (t) t.textContent = 'AI 正在生成…';
+}
+
+function clearLiveSummary() {
+  const t = document.getElementById('result-title');
+  if (t) t.textContent = '总结结果';
+}
+
+/**
+ * 生成结束后的收尾：去掉闪烁光标、复位标题。
+ *
+ * 光标是 paintLiveSummary() 插进正文里的，只有重绘正文才会消失；
+ * 一旦定位不到结果（拿不到 video_id）就会一直闪、标题也停在
+ * 「AI 正在生成…」，所以这里必须无条件清一次。
+ * 注意保留正文内容 —— 万一后续定位失败，用户至少还能看到已生成的字。
+ */
+function stopLiveSummary() {
+  const body = document.getElementById('result-body');
+  if (body) {
+    const cursor = body.querySelector('.live-cursor');
+    if (cursor) cursor.remove();
+  }
+  clearLiveSummary();
 }
 
 function mapStage(stage, msg) {
@@ -675,6 +692,7 @@ function mapStage(stage, msg) {
 }
 
 async function finishTask(success, payload) {
+  const job = TASK;              // 先留住 jobId，后面定位结果要用它兜底
   if (TASK && TASK.es) { TASK.es.close(); TASK.es = null; }
 
   document.getElementById('btn-cancel').classList.add('hidden');
@@ -682,19 +700,40 @@ async function finishTask(success, payload) {
   const ab = document.getElementById('btn-article');
   if (ab) ab.disabled = false;
 
+  // 无论成功失败，先收掉实时显字的光标与临时标题
+  stopLiveSummary();
+
+  // 旧版服务端失败时推的是 end{stage:'error'}，会被当成成功而弹出
+  // 「处理完成」。新服务端改成只推 error 事件，这里再兜一道。
+  if (success && payload && payload.stage === 'error') {
+    success = false;
+    payload = { message: '任务失败，请查看处理进度中的提示' };
+  }
+
   if (success) {
     updateStep(4, 'done', '完成');
     document.getElementById('prog-bar').style.width = '100%';
     toast('处理完成', 'ok');
-    loadQuota();
 
-    // 定位结果：文章任务用 article_id，视频任务用返回的 video_id
-    const vid = payload && payload.video_id;
-    const aid = (TASK && TASK.articleId) || (payload && payload.article_id);
+    // 定位结果：视频任务用 video_id，文章任务用 article_id
+    let vid = payload && payload.video_id;
+    let aid = (job && job.articleId) || (payload && payload.article_id);
+
+    // 兜底：Worker 是「先写 Redis、后写库」，end 事件到得比库里的
+    // video_id 早时这里会缺 id，向前端已知的状态接口再问一次。
+    if (!vid && !aid && job && job.jobId) {
+      try {
+        const st = await API.get(`/api/job/${job.jobId}`);
+        vid = st.video_id;
+        aid = aid || st.article_id;
+      } catch (_) { /* 查不到就算了，下面给兜底提示 */ }
+    }
+
     TASK = null;
 
     if (vid) await openContent('video', vid, true);
     else if (aid) await openContent('article', aid, true);
+    else toast('任务已完成，可到「我的内容」查看结果', 'ok');
   } else {
     const msg = (payload && payload.message) || '处理失败';
     updateStep(4, 'error', msg);
@@ -715,6 +754,124 @@ async function cancelTask() {
     const ab = document.getElementById('btn-article');
     if (ab) ab.disabled = false;
   } catch (ex) { err(ex.message); }
+}
+
+/* ─── 重新总结（复用已有文字稿，只重跑 AI）─── */
+
+async function resummarize() {
+  if (!VIEW) return;
+  if (TASK) { toast('已有任务在执行，请等待完成'); return; }
+
+  const kind = VIEW.kind;
+  const id = VIEW.id;
+  if (!confirm('重新生成总结？会复用已保存的文字稿/正文，只重跑一次 AI。')) return;
+
+  const path = kind === 'video'
+    ? `/api/videos/${id}/resummarize`
+    : `/api/articles/${id}/resummarize`;
+
+  try {
+    const d = await API.post(path, {});
+
+    // 切回工作台展示进度（PAGES.work 同步构建 DOM，go() 返回后即可操作）
+    closeAllModals();          // 从详情弹窗发起时要先收掉，否则进度被盖住
+    CURRENT = 'work';
+    go('work');
+
+    TASK = {
+      jobId: d.job_id, es: null, kind,
+      articleId: kind === 'article' ? id : null,
+    };
+
+    document.getElementById('progress-card').classList.remove('hidden');
+    document.getElementById('btn-cancel').classList.remove('hidden');
+    document.getElementById('result-tools').classList.add('hidden');
+    clearLiveSummary();
+    document.getElementById('result-body').innerHTML =
+      '<div class="empty" style="margin:auto"><div class="spinner"></div>'
+      + '<p class="text-xs muted">AI 开始生成后，正文会实时显示在这里</p></div>';
+
+    resetSteps();
+    updateStep(1, 'done', '复用已有信息');
+    updateStep(2, 'skipped', '无需下载');
+    updateStep(3, 'done', '使用已有文字稿');
+    updateStep(4, 'running', '重新生成总结…');
+
+    subscribe(d.job_id);
+  } catch (ex) {
+    err(ex.message);
+  }
+}
+
+/* ─── 朗读（Edge TTS）─── */
+
+const TTS_VOICES = [
+  ['zh-CN-XiaoxiaoNeural', '晓晓 · 女'],
+  ['zh-CN-YunxiNeural', '云希 · 男'],
+  ['zh-CN-XiaoyiNeural', '晓伊 · 女'],
+  ['zh-CN-YunjianNeural', '云健 · 男'],
+  ['zh-CN-YunyangNeural', '云扬 · 男'],
+  ['zh-CN-liaoning-XiaobeiNeural', '晓北 · 东北女'],
+];
+
+const TTS_RATES = [
+  ['-25%', '慢'], ['+0%', '正常'], ['+25%', '快'], ['+50%', '很快'],
+];
+
+let TTS_AUDIO = null;
+
+function ttsVoice() {
+  return localStorage.getItem('bsum_voice') || TTS_VOICES[0][0];
+}
+
+function setTTSVoice(v) {
+  localStorage.setItem('bsum_voice', v);
+  toast('音色已切换');
+}
+
+function ttsRate() {
+  return localStorage.getItem('bsum_rate') || '+0%';
+}
+
+function setTTSRate(v) {
+  localStorage.setItem('bsum_rate', v);
+  toast('语速已切换');
+}
+
+async function speakSummary() {
+  if (!VIEW || !VIEW.summary) { toast('没有可朗读的内容'); return; }
+
+  // 再次点击 = 停止
+  if (TTS_AUDIO) {
+    TTS_AUDIO.pause();
+    TTS_AUDIO = null;
+    toast('已停止朗读');
+    return;
+  }
+
+  toast('正在合成语音，稍等…');
+  try {
+    const resp = await fetch('/api/tts', {
+      method: 'POST',
+      headers: API.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ text: VIEW.summary, voice: ttsVoice(), rate: ttsRate() }),
+    });
+
+    if (!resp.ok) {
+      let msg = `语音合成失败 (${resp.status})`;
+      try { const j = await resp.json(); msg = j.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    TTS_AUDIO = new Audio(url);
+    TTS_AUDIO.onended = () => { TTS_AUDIO = null; URL.revokeObjectURL(url); };
+    await TTS_AUDIO.play();
+  } catch (ex) {
+    TTS_AUDIO = null;
+    err(ex.message);
+  }
 }
 
 function paintVideoInfo(info) {
@@ -751,10 +908,9 @@ async function openContent(kind, id, stayInWork) {
     }
 
     if (!stayInWork) {
-      CURRENT = 'detail';
-      document.getElementById('page-title').textContent = VIEW.title || '内容详情';
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-      await renderDetail();
+      // 用弹窗而非独立页面：从「我的内容」点进来看完能直接关掉回到原位置，
+      // 而且阅读宽度收窄（780px ≈ 45 汉字/行），长总结不再铺满整屏
+      openDetailModal();
     } else {
       // 在工作台内直接填充右侧
       if (CURRENT !== 'work') {
@@ -769,42 +925,43 @@ async function openContent(kind, id, stayInWork) {
   }
 }
 
-async function renderDetail() {
-  const root = document.getElementById('page-root');
-  root.innerHTML = `
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title">
-          <span class="dot"></span>
-          <span id="d-title">${escapeHtml(VIEW.title || '')}</span>
-        </div>
-        <button class="btn btn-sm" onclick="go('work')">返回工作台</button>
-      </div>
-      <div class="text-xs muted mb-2" id="d-meta"></div>
-      <div class="result-toolbar" style="border-top:none;padding-top:0">
-        <button class="btn btn-sm" onclick="copySummary()">复制</button>
-        <button class="btn btn-sm" onclick="downloadSummary()">下载 MD</button>
-        <button class="btn btn-sm hidden" id="d-btn-ts" onclick="viewTranscript()">查看文字稿</button>
-        <button class="btn btn-sm" onclick="chatAboutCurrent()">就此内容提问</button>
-      </div>
-      <div class="md mt-2" id="d-body"></div>
-    </div>
-  `;
+function openDetailModal() {
+  if (!VIEW) return;
 
   const meta = [];
   if (VIEW.kind === 'video') {
     if (VIEW.uploader) meta.push(VIEW.uploader);
     if (VIEW.duration) meta.push(VIEW.duration);
-    if (VIEW.transcriptSource) meta.push('文字稿来源：' + (VIEW.transcriptSource === 'asr' ? '语音识别' : '字幕'));
+    if (VIEW.transcriptSource) {
+      meta.push('文字稿来源：' + (VIEW.transcriptSource === 'asr' ? '语音识别' : '字幕'));
+    }
   }
   if (VIEW.processedAt) meta.push('处理于 ' + VIEW.processedAt);
-  document.getElementById('d-meta').textContent = meta.join(' · ');
 
-  if (VIEW.hasTranscript) document.getElementById('d-btn-ts').classList.remove('hidden');
+  const tools = [
+    `<button class="btn btn-sm" onclick="copySummary()">复制</button>`,
+    `<button class="btn btn-sm" onclick="downloadSummary()">下载 MD</button>`,
+    VIEW.kind === 'video' && VIEW.hasTranscript
+      ? `<button class="btn btn-sm" onclick="viewTranscript()">查看文字稿</button>` : '',
+    `<button class="btn btn-sm" onclick="speakSummary()">朗读</button>`,
+    `<button class="btn btn-sm" onclick="resummarize()">重新总结</button>`,
+    `<button class="btn btn-sm" onclick="chatAboutCurrent()">就此内容提问</button>`,
+  ].filter(Boolean).join('');
 
-  document.getElementById('d-body').innerHTML = VIEW.summary
+  const content = VIEW.summary
     ? md(VIEW.summary)
     : '<div class="empty"><div class="ico">◌</div><h3>暂无总结</h3><p>该内容还没有生成 AI 总结</p></div>';
+
+  showModal({
+    title: VIEW.title || '内容详情',
+    width: 780,
+    // fill：标题与工具栏常驻，只有正文滚动
+    fill: true,
+    body: `
+      <div class="modal-meta">${escapeHtml(meta.join(' · '))}</div>
+      <div class="modal-tools">${tools}</div>
+      <div class="modal-scroll"><div class="md modal-md">${content}</div></div>`,
+  });
 }
 
 function paintResult() {
@@ -840,11 +997,10 @@ function openSourceLink() {
 
 /* ─── 工具动作 ─── */
 
-function copySummary() {
+async function copySummary() {
   if (!VIEW || !VIEW.summary) { toast('没有可复制的内容'); return; }
-  navigator.clipboard.writeText(VIEW.summary)
-    .then(() => ok('已复制到剪贴板'))
-    .catch(() => err('复制失败，请手动选择'));
+  if (await copyText(VIEW.summary)) ok('已复制到剪贴板');
+  else err('复制失败，请手动选中文本复制');
 }
 
 async function downloadSummary() {
@@ -855,14 +1011,35 @@ async function downloadSummary() {
 
   try {
     const resp = await fetch(path, { headers: API.headers() });
-    if (!resp.ok) throw new Error('导出失败');
+    if (!resp.ok) {
+      // 暴露服务端原因，而不是笼统的「导出失败」
+      let msg = `导出失败 (${resp.status})`;
+      try {
+        const j = await resp.json();
+        if (j && j.message) msg = j.message;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+
     const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = (VIEW.title || 'summary') + '.md';
+    a.href = url;
+    a.download = respFilename(resp) || ((VIEW.title || 'summary') + '.md');
+    document.body.appendChild(a);        // 部分浏览器要求节点在文档里
     a.click();
-    URL.revokeObjectURL(a.href);
+    a.remove();
+    // 立即 revoke 在部分浏览器会掐断尚未开始的下载
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (ex) { err(ex.message); }
+}
+
+/** 从 Content-Disposition 里取服务端定的文件名（同源请求可直接读该头） */
+function respFilename(resp) {
+  const cd = resp.headers.get('Content-Disposition') || '';
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]); } catch (_) { return ''; }
 }
 
 async function viewTranscript() {
@@ -881,10 +1058,11 @@ function showTranscriptModal(text) {
   showModal({
     title: '文字稿',
     width: 720,
+    fill: true,
     body: `<div class="text-xs muted mb-2">${text.length} 字 · ${
       VIEW.transcriptSource === 'asr' ? '语音识别' : '视频字幕'
     }</div>
-    <div style="max-height:60vh;overflow-y:auto;font-size:13px;line-height:1.85;white-space:pre-wrap"
+    <div class="modal-scroll" style="font-size:13px;line-height:1.85;white-space:pre-wrap"
       >${escapeHtml(text)}</div>`,
     buttons: [{ text: '关闭', onclick: 'closeModal()' }],
   });
@@ -892,6 +1070,7 @@ function showTranscriptModal(text) {
 
 function chatAboutCurrent() {
   if (!VIEW) return;
+  closeAllModals();          // 要切到问答页，弹窗留着会盖住页面
   CHAT = { messages: [], es: null, kind: VIEW.kind, contentId: VIEW.id };
   go('chat');
 }
@@ -1275,7 +1454,7 @@ PAGES.settings = async () => {
           <div class="card-head">
             <div class="card-title"><span class="dot"></span> B站 Cookie</div>
             <span class="badge ${ck.configured ? 'badge-green' : 'badge-gray'}">
-              ${ck.configured ? '已配置 ' + ck.length + ' 字符' : '未配置'}
+              ${ck.configured ? '已配置 ' + ck.length + ' 字符 · ' + (ck.entries || 0) + ' 条' : '未配置'}
             </span>
           </div>
           <div class="card-desc">
@@ -1300,8 +1479,8 @@ PAGES.settings = async () => {
 
       <div>
         <div class="card">
-          <div class="card-head"><div class="card-title"><span class="dot"></span> 我的用量</div></div>
-          <div class="grid grid-3" style="gap:10px">
+          <div class="card-head"><div class="card-title"><span class="dot"></span> 内容统计</div></div>
+          <div class="grid grid-2" style="gap:10px">
             <div class="stat" style="border:none;padding:0">
               <div class="stat-label">视频</div>
               <div class="stat-value">${stat ? stat.video_count : '—'}</div>
@@ -1310,20 +1489,29 @@ PAGES.settings = async () => {
               <div class="stat-label">已总结</div>
               <div class="stat-value">${stat ? stat.summary_count : '—'}</div>
             </div>
-            <div class="stat" style="border:none;padding:0">
-              <div class="stat-label">语音识别</div>
-              <div class="stat-value">${stat ? stat.asr_count : '—'}</div>
-            </div>
           </div>
-          <div class="mt-3">
-            <div class="row-between text-xs muted mb-1">
-              <span>本月识别额度</span>
-              <span id="q-text">—</span>
-            </div>
-            <div class="usage-bar"><div class="progress-bar" id="q-bar" style="width:0%"></div></div>
-            <div class="hint mt-1">
-              额度仅对「无字幕需语音识别」的视频消耗，有字幕的视频不占用。
-            </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="card-title"><span class="dot"></span> 朗读设置</div></div>
+          <div class="card-desc">
+            内容详情里的「朗读」按钮会把总结合成语音播放，无需额外配置。
+          </div>
+          <div class="field">
+            <label>音色</label>
+            <select id="s-voice" onchange="setTTSVoice(this.value)">
+              ${TTS_VOICES.map(([v, name]) =>
+                `<option value="${v}"${v === ttsVoice() ? ' selected' : ''}>${name}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>语速</label>
+            <select id="s-rate" onchange="setTTSRate(this.value)">
+              ${TTS_RATES.map(([v, name]) =>
+                `<option value="${v}"${v === ttsRate() ? ' selected' : ''}>${name}</option>`
+              ).join('')}
+            </select>
           </div>
         </div>
 
@@ -1352,19 +1540,6 @@ PAGES.settings = async () => {
     </div>
   `;
 
-  // 用量条
-  try {
-    const u = await API.get('/api/usage');
-    const q = u.asr_quota_sec || 0, used = u.asr_used_sec || 0;
-    const pct = q > 0 ? Math.min(100, used / q * 100) : 0;
-    document.getElementById('q-text').textContent = q > 0
-      ? `已用 ${fmtDuration(used)} / ${fmtDuration(q)}`
-      : `已用 ${fmtDuration(used)}（无限制）`;
-    const bar = document.getElementById('q-bar');
-    bar.style.width = pct + '%';
-    if (pct > 90) bar.className = 'progress-bar danger';
-    else if (pct > 70) bar.className = 'progress-bar warn';
-  } catch (_) {}
 };
 
 async function saveSettings() {
@@ -1434,15 +1609,27 @@ async function changePassword() {
    弹窗
    ═══════════════════════════════════════════ */
 
-function showModal({ title, body, buttons = [], width }) {
+/**
+ * 弹窗栈。原先 closeModal() 是把 modal-root 整个清空，
+ * 「详情弹窗 → 查看文字稿」这种嵌套场景会连底层弹窗一起清掉，
+ * 关掉文字稿后就什么都不剩了。改成栈：每层一个节点，关闭只弹栈顶。
+ */
+const MODAL_STACK = [];
+
+/**
+ * @param fill 标题/工具栏常驻，只有 .modal-scroll 子元素滚动（长文阅读用）
+ */
+function showModal({ title, body, buttons = [], width, fill = false }) {
   const root = document.getElementById('modal-root');
   const style = width ? `style="max-width:${width}px"` : '';
-  root.innerHTML = `
-    <div class="modal-mask" onclick="if(event.target===this)closeModal()">
-      <div class="modal" ${style}>
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-mask';
+  wrap.innerHTML = `
+      <div class="modal ${fill ? 'modal-fill' : ''}" ${style}>
         <div class="modal-head">
           <span>${escapeHtml(title)}</span>
-          <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
+          <button class="btn btn-ghost btn-sm" onclick="closeModal()" title="关闭（Esc）">✕</button>
         </div>
         <div class="modal-body">${body}</div>
         ${buttons.length ? `<div class="modal-foot">${
@@ -1450,18 +1637,37 @@ function showModal({ title, body, buttons = [], width }) {
             `<button class="btn ${b.primary ? 'btn-primary' : ''}" data-mi="${i}">${escapeHtml(b.text)}</button>`
           ).join('')
         }</div>` : ''}
-      </div>
-    </div>`;
+      </div>`;
 
+  // 点击遮罩空白处关闭「本层」
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) closeModal(); });
+
+  root.appendChild(wrap);
+  MODAL_STACK.push(wrap);
+
+  const layer = MODAL_STACK.length;
   buttons.forEach((b, i) => {
-    const el = root.querySelector(`[data-mi="${i}"]`);
+    const el = wrap.querySelector(`[data-mi="${i}"]`);
     if (el) el.onclick = () => { new Function(b.onclick)(); };
   });
+  return { wrap, layer };
 }
 
+/** 关闭最上层的弹窗 */
 function closeModal() {
-  document.getElementById('modal-root').innerHTML = '';
+  const top = MODAL_STACK.pop();
+  if (top) top.remove();
 }
+
+/** 关闭全部弹窗 */
+function closeAllModals() {
+  while (MODAL_STACK.length) closeModal();
+}
+
+// Esc 关闭最上层：这是弹窗最自然的「返回」方式
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && MODAL_STACK.length) closeModal();
+});
 </script>
 
 <style>
@@ -1479,9 +1685,35 @@ function closeModal() {
   .modal-head {
     padding: 15px 20px; border-bottom: 1px solid var(--border);
     font-size: 14px; font-weight: 600; display: flex;
-    justify-content: space-between; align-items: center;
+    justify-content: space-between; align-items: center; gap: 12px;
+  }
+  /* 标题过长时截断，不把关闭按钮挤出去 */
+  .modal-head > span:first-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .modal-body { padding: 17px 20px; }
+
+  /*
+   * fill 模式：标题与工具栏常驻，只有正文区自己滚动。
+   * 同 .scroll-panel 的要点 —— 滚动容器的 min-height 必须置 0，
+   * 否则 flex 子项会被内容撑开，overflow 永远不触发。
+   */
+  .modal.modal-fill { overflow: hidden; display: flex; flex-direction: column; }
+  .modal-fill .modal-body {
+    flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal-fill .modal-body > .modal-scroll {
+    flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  }
+
+  /* 详情弹窗的元信息与工具栏 */
+  .modal-meta { font-size: 12px; color: var(--ink-500); margin-bottom: 10px; }
+  .modal-tools {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  /* 阅读区收窄到约 45 个汉字/行，长文不再铺满整屏 */
+  .modal-md { font-size: 14px; }
   .modal-foot {
     padding: 13px 20px; border-top: 1px solid var(--border);
     display: flex; justify-content: flex-end; gap: 8px;

@@ -269,6 +269,36 @@ a:hover { text-decoration: underline; }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .grid-4 { grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); }
 
+/* ═══ 面板内滚动 ═══ */
+
+/*
+ * 让长内容在卡片**内部**滚动，而不是把整个页面撑长。
+ *
+ * 高度 = 视口 - 顶栏(56) - 内容区上下内边距(22 × 2)，正好铺满一屏，
+ * 页面本身不产生滚动条（margin-bottom 必须归零，否则会多出 16px 的
+ * 整页滚动）。
+ *
+ * 用法：卡片加 .scroll-panel，里面需要滚动的那个子元素加 .scroll-body。
+ * 注意 .scroll-body 的 min-height:0 不能省 —— flex 子项默认 min-height:auto，
+ * 会被内容撑开，overflow 永远不会触发（这正是改动前"整页滚动"的原因）。
+ */
+.scroll-panel {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 100px);
+  /* 只在视口极矮（< 380px）时兜底；设太大会让矮窗口平白多出一截整页滚动 */
+  min-height: 280px;
+  margin-bottom: 0;
+}
+
+.scroll-panel > .scroll-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 滚到底后不把滚动传递给页面，避免"滚着滚着整页又动了" */
+  overscroll-behavior: contain;
+}
+
 /* ═══ 统计块 ═══ */
 
 .stat {

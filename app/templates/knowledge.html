@@ -222,26 +222,17 @@
 
 <div id="modal-root"></div>
 
+<script src="/static/vendor/marked.min.js"></script>
 <script src="/static/common.js"></script>
 <script>
 let VIDEOS = [], ARTICLES = [], CHATS = [];
 let VQ = '', AQ = '';
 let SESS = { id: null, messages: [], busy: false };
-let MARKED_OK = false;
 
 const el = id => document.getElementById(id);
 
-import('https://cdn.jsdelivr.net/npm/marked/marked.min.js')
-  .then(m => { window.marked = m.marked || m; MARKED_OK = true; })
-  .catch(() => {
-    window.marked = { parse: (t) => '<p>' + escapeHtml(t).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>' };
-    MARKED_OK = true;
-  });
-
-function md(t) {
-  if (!t) return '';
-  return window.marked ? window.marked.parse(t) : escapeHtml(t);
-}
+// Markdown 渲染由 common.js 的 md() 提供，
+// marked 本体走 /static/vendor/marked.min.js（自托管，不依赖外网 CDN）
 
 /* ═══ 初始化 ═══ */
 
