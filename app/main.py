@@ -72,7 +72,11 @@ async def _bootstrap() -> None:
         )
 
         # 布尔开关与其默认值，统一并入配置定义表处理
-        bool_defaults = {"enable_asr": "true", "registration_open": "true"}
+        bool_defaults = {
+            "enable_asr": "true",
+            "registration_open": "true",
+            "share_summary_across_users": "true",
+        }
 
         for d in SETTING_DEFS:
             key = d["key"]

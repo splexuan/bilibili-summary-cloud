@@ -60,7 +60,9 @@ class ConflictError(AppError):
 class QuotaExceededError(AppError):
     status_code = 429
     code = "QUOTA_EXCEEDED"
-    message = "本月语音识别额度已用完"
+    # 兜底文案：既可能是本站的月度上限，也可能是腾讯云账号额度被拒
+    # （见 progress.mark_asr_quota_blocked），所以两边都不写死
+    message = "语音识别额度不可用，请联系管理员"
 
 
 class RateLimitError(AppError):

@@ -1,14 +1,21 @@
 """
 腾讯云 COS 对象存储封装。
 
-对象键规范（由服务端统一生成，杜绝目录遍历）：
-    thumbnails/{user_id}/{vid}.jpg     封面
-    audio/{user_id}/{vid}_{ts}.m4a     音频中转（识别后删除）
-    index/{user_id}/{vid}.joblib       RAG 索引
+实际只存两类对象（对象键由服务端统一生成，杜绝目录遍历）：
+    thumbnails/{user_id}/{vid}.jpg     封面（长期保留，随内容删除）
+    audio/{user_id}/{vid}_{ts}.m4a     音频中转（识别完立即删除）
+
+注意：RAG / 知识库索引**不落 COS**，只存在进程内内存缓存
+（见 services/retrieval.py 的 _rag_cache / _kb_cache），重启即失效并按需重建。
+cos_service 里保留的 index_key() 目前没有任何调用点，不要误以为索引在对象存储里。
 
 【重要】COS 地域必须与服务器地域一致。
 官方说明：使用 COS 存储音频并生成 URL 提交 ASR 任务，
 同地域走内网，不产生外网下行流量费用；跨地域则会产生费用。
+
+【未配置时】没有本地磁盘兜底，也不会降级到本地目录：
+    - 封面：上传失败只记 warning，thumbnail_key 留空，前端显示占位图
+    - ASR：上传音频/生成预签名 URL 直接抛 COSError，任务失败
 """
 import time
 from pathlib import Path
@@ -23,6 +30,39 @@ logger = get_logger(__name__)
 
 # 预签名 URL 有效期（秒）。ASR 下载完即可，给足余量。
 PRESIGN_EXPIRES = 3600
+
+# 展示用缩略图规格（16:9）。
+# 站内最大的封面显示宽度是知识库预览弹窗的 180px，取 2 倍屏即 360px，
+# 480 有富余。9:16 用 270 保持比例，服务端按比例缩放不会变形。
+THUMB_SIZE = (480, 270)
+
+# 展示用缩略图有效期：比预签名默认长一些，页面停留久了也不至于裂图
+THUMB_EXPIRES = 7200
+
+
+def _with_image_process(
+    url: str,
+    width: int,
+    height: int,
+    fmt: str = "webp",
+    quality: int = 80,
+) -> str:
+    """
+    在图片 URL 上追加 COS 基础图片处理（imageMogr2）参数。
+
+    为什么要这么做：封面原图是 B 站的 1146~1920px 大图，单张 130~210KB，
+    而站内最大只显示到 180px。由 COS 按需压缩，实测可降到 24~41KB
+    （省 74%~84%），且不占额外存储 —— 每次访问实时生成，无需预生成多套图。
+
+    参数失效时的行为（线上桶实测）：thumbnail/format 这类参数写错会被忽略、
+    直接返回原图（200），所以最坏情况只是退回原图，不会裂图。
+    前端仍保留了 onerror 退回原图的兜底 —— 因为 ci-process 这类会改变路由
+    的参数写错时 COS 是返回 400 的（实测），留着兜底不吃亏。
+    """
+    if not url:
+        return ""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}imageMogr2/thumbnail/{width}x{height}/format/{fmt}/quality/{quality}"
 
 
 class COSClient:
@@ -180,6 +220,29 @@ class COSClient:
         except COSError:
             logger.warning("生成封面链接失败，已降级为空: %s", key)
             return ""
+
+    def thumb_url(self, key: str, size: tuple[int, int] = THUMB_SIZE,
+                  expires: int = THUMB_EXPIRES) -> str:
+        """
+        展示用小图地址：由 COS 实时压缩后再回源，比原图省 7~8 成流量。
+
+        这里不做任何可用性探测 —— 处理参数不受支持时 COS 会返回原图，
+        真出错也是前端的 onerror 兜底。探测一次要多发一次请求，
+        而失败场景本就少见，交前端兜底更划算。
+        """
+        return _with_image_process(self.public_url(key, expires), *size)
+
+    def display_urls(self, key: str, expires: int = 3600) -> tuple[str, str]:
+        """
+        展示用的一对地址：(原图 URL, 缩略图 URL)。
+
+        原图作为缩略图加载失败时的兜底，所以两个都给前端。
+        key 为空时返回两个空串，前端显示占位图。
+        """
+        full = self.public_url(key, expires)
+        if not full:
+            return "", ""
+        return full, _with_image_process(full, *THUMB_SIZE)
 
     # ─── 删除 ───
 

@@ -96,7 +96,7 @@ async def chat_video(video_id: int, req: ChatReq, user: CurrentUser, db: DbSessi
     # 无命中时不用空资料，交给 system 提示里的「## 转写开头」兜底。
     context = ""
     if transcript and question:
-        hits = await asyncio.to_thread(rag_search, video.vid, transcript, question, 5)
+        hits = await asyncio.to_thread(rag_search, user.id, video.vid, transcript, question, 5)
         context = "\n\n---\n\n".join(hits)[:MAX_CONTEXT_CHARS]
 
     system = build_content_system_prompt(summary, context, transcript)
@@ -176,7 +176,7 @@ async def chat_kb(req: KBChatReq, user: CurrentUser, db: DbSession):
             if not obj:
                 continue
             hits = await asyncio.to_thread(
-                rag_search, obj.vid, obj.transcript or "", search_query, 3
+                rag_search, user.id, obj.vid, obj.transcript or "", search_query, 3
             )
             # 原文没命中 → 用总结兜底，避免「查得到内容却答不出来」
             body = "\n\n".join(hits) if hits else (obj.summary or "")
@@ -189,7 +189,7 @@ async def chat_kb(req: KBChatReq, user: CurrentUser, db: DbSession):
             if not obj:
                 continue
             hits = await asyncio.to_thread(
-                rag_search, f"a{obj.id}", obj.text or "", search_query, 3
+                rag_search, user.id, f"a{obj.id}", obj.text or "", search_query, 3
             )
             body = "\n\n".join(hits) if hits else (obj.summary or "")
             if not body.strip():

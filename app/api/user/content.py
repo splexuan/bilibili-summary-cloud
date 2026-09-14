@@ -369,12 +369,8 @@ async def list_videos(user: CurrentUser, db: DbSession, page: PageParams):
     cos = await get_cos(db)
     items = []
     for v in rows[: page.page_size]:
-        thumb = ""
-        if v.thumbnail_key:
-            try:
-                thumb = cos.public_url(v.thumbnail_key, expires=3600)
-            except Exception:
-                thumb = ""
+        # 原图 + COS 压缩后的展示图（列表里最多显示 96px，用原图纯属浪费）
+        thumb, thumb_small = cos.display_urls(v.thumbnail_key, expires=3600)
         items.append({
             "id": v.id,
             "vid": v.vid,
@@ -383,8 +379,10 @@ async def list_videos(user: CurrentUser, db: DbSession, page: PageParams):
             "duration_str": v.duration_str,
             "platform": v.platform,
             "thumbnail": thumb,
+            "thumbnail_small": thumb_small,
             "has_summary": bool(v.summary),
             "transcript_source": v.transcript_source,
+            "reused": bool(v.copied_from_video_id),
             "processed_at": v.processed_at.strftime("%Y-%m-%d %H:%M") if v.processed_at else "",
         })
 
@@ -403,13 +401,12 @@ async def get_video(video_id: int, user: CurrentUser, db: DbSession):
     if not video or video.user_id != user.id:
         raise NotFoundError("视频不存在")
 
-    thumb = ""
-    if video.thumbnail_key:
-        try:
-            cos = await get_cos(db)
-            thumb = cos.public_url(video.thumbnail_key, expires=3600)
-        except Exception:
-            pass
+    thumb, thumb_small = "", ""
+    try:
+        cos = await get_cos(db)
+        thumb, thumb_small = cos.display_urls(video.thumbnail_key, expires=3600)
+    except Exception:
+        pass
 
     return {
         "id": video.id,
@@ -420,9 +417,11 @@ async def get_video(video_id: int, user: CurrentUser, db: DbSession):
         "duration_str": video.duration_str,
         "platform": video.platform,
         "thumbnail": thumb,
+        "thumbnail_small": thumb_small,
         "summary": video.summary,
         "has_transcript": bool(video.transcript),
         "transcript_source": video.transcript_source,
+        "reused": bool(video.copied_from_video_id),
         "processed_at": video.processed_at.strftime("%Y-%m-%d %H:%M") if video.processed_at else "",
     }
 
@@ -455,7 +454,7 @@ async def delete_video(video_id: int, user: CurrentUser, db: DbSession):
 
     from app.services.retrieval import clear_kb_cache, clear_rag_cache
 
-    clear_rag_cache(video.vid)
+    clear_rag_cache(user.id, video.vid)
     clear_kb_cache(user.id)
 
     return Ok(message="已删除")

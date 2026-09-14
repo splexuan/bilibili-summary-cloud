@@ -284,6 +284,46 @@ def reset_usage(user_id: int, year_month: str | None = None) -> None:
         pass
 
 
+# ═══════════════════════════════════════════
+# 腾讯云账号侧额度「熔断」
+# ═══════════════════════════════════════════
+#
+# 注意区分两种「额度」：
+#   1. 本站自己的月度配额（上面的 _usage_key，按用户累计）—— 用超了是本站在限制
+#   2. 腾讯云账号侧的资源包/免费额度 —— 用超了是腾讯云在拒绝，和本站配额无关
+#
+# 第 2 种情况下，腾讯云的 CreateRecTask 会直接报错。而这个报错发生在
+# 「下载音频 → 转码 → 上传 COS」之后，等于每次重试都要白花几十秒 + 一份
+# COS 流量，最后才拿到同一句错误。这里记一个短 TTL 的标志，下次直接拦截。
+
+_ASR_BLOCK_KEY = "bsum:asr_quota_blocked"
+_ASR_BLOCK_TTL = 600  # 10 分钟：够挡住连续重试，又不至于让管理员补了额度还一直被拦
+
+
+def mark_asr_quota_blocked(reason: str) -> None:
+    """记录「腾讯云账号额度不可用」，短时间内不再尝试"""
+    try:
+        get_redis().setex(_ASR_BLOCK_KEY, _ASR_BLOCK_TTL, reason or "腾讯云语音识别额度不可用")
+    except Exception as exc:
+        logger.warning("记录 ASR 额度熔断失败: %s", exc)
+
+
+def get_asr_quota_blocked() -> str:
+    """返回熔断原因；未熔断返回空串"""
+    try:
+        return get_redis().get(_ASR_BLOCK_KEY) or ""
+    except Exception:
+        return ""
+
+
+def clear_asr_quota_blocked() -> None:
+    """清除熔断（管理员补额度后点「测试语音识别」或识别成功时调用）"""
+    try:
+        get_redis().delete(_ASR_BLOCK_KEY)
+    except Exception:
+        pass
+
+
 def health_check() -> tuple[bool, str]:
     try:
         get_redis().ping()

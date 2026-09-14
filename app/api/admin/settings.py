@@ -101,6 +101,14 @@ async def _test_asr(db) -> dict:
         cfg.get("asr_secret_key", ""),
         cfg.get("asr_region", "ap-guangzhou"),
     )
+
+    # 鉴权通过说明账号配置没问题 → 顺手清掉「腾讯云额度不可用」的熔断标志，
+    # 让管理员补了资源包之后不用等 TTL 过期就能重试
+    if ok:
+        from app.core.progress import clear_asr_quota_blocked
+
+        await asyncio.to_thread(clear_asr_quota_blocked)
+
     return {"ok": ok, "message": msg}
 
 

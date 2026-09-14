@@ -152,10 +152,216 @@
     user-select: all;
   }
 
+  /* 放整条邀请链接时用：14px 的等宽字会让 URL 折成三四行，缩小并左对齐更好读 */
+  .pwd-reveal.link {
+    font-size: 11.5px;
+    line-height: 1.7;
+    text-align: left;
+  }
+
   .tab-bar {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+  }
+
+  /* ─── 详情弹窗：宽版 ─── */
+  /*
+   * .modal 默认 max-width:440px，配合 .grid-2 的 minmax(300px,1fr)
+   * 在 400px 可用宽度里只排得下 1 列 —— 元信息会一路竖着堆下来。
+   * 详情页内容多，单独给个宽版。
+   */
+  .modal-wide { max-width: 860px; }
+
+  /*
+   * .modal 默认 overflow-y:auto，标题栏和底部按钮会跟着内容一起滚走。
+   * 详情内容很长，改成 flex 列布局后只让 .modal-body 滚。
+   * min-height:0 不能省：flex 子项默认 min-height:auto，会被内容撑开，
+   * 那样 overflow 永远不触发（同 .scroll-body 的坑）。
+   */
+  .modal-fill { display: flex; flex-direction: column; overflow: hidden; }
+  .modal-fill .modal-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+  /* 头部：封面 + 标题 + 标签 */
+  .vd-head { display: flex; gap: 14px; align-items: flex-start; }
+
+  .vd-thumb {
+    width: 136px;
+    aspect-ratio: 16 / 9;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--ink-100);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-400);
+    font-size: 11px;
+  }
+  .vd-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  .vd-headmain { flex: 1; min-width: 0; }
+  .vd-title {
+    font-size: 14.5px;
+    font-weight: 600;
+    line-height: 1.55;
+    color: var(--ink-900);
+    margin-bottom: 9px;
+    /* 投稿标题经常长到离谱，最多给 3 行，再多就省略 */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .vd-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .vd-link {
+    margin-top: 9px;
+    font-size: 11.5px;
+    font-family: var(--mono);
+    color: var(--ink-500);
+    overflow-wrap: anywhere;
+  }
+
+  /* 元信息：自适应多列，用 1px 背景做分隔线（深浅色主题都不用另写） */
+  .vd-meta {
+    display: grid;
+    gap: 1px;
+    margin: 16px 0;
+    grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .vd-meta-item { background: var(--surface); padding: 9px 12px; min-width: 0; }
+  .vd-meta-item .k {
+    display: block;
+    font-size: 11px;
+    color: var(--ink-500);
+    margin-bottom: 3px;
+  }
+  .vd-meta-item .v {
+    display: block;
+    font-size: 12.5px;
+    color: var(--ink-900);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 内容面板：转写 / 总结 */
+  .vd-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .vd-panel + .vd-panel { margin-top: 12px; }
+
+  .vd-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .vd-panel-title { font-size: 12.5px; font-weight: 600; color: var(--ink-800); }
+  .vd-chip {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--ink-500);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 1px 8px;
+  }
+  .vd-copy { margin-left: auto; flex-shrink: 0; }
+
+  /*
+   * 转写面板：内容动辄几千字，且主要是排查时才看，固定高度内部滚动。
+   * 高度压得比较矮是有意的 —— 它一高，「总结」就被挤到看不见了。
+   * overscroll-behavior 防止滚到底后继续带动外层 modal-body。
+   *
+   * 174px 是算出来的，不是随手写的：
+   *   滚动容器的可视裁剪边界是「内边距盒」，不是内容盒 ——
+   *   padding-bottom 只让滚到底时多留 12px 呼吸空间，
+   *   并不会在默认（未滚动）状态下把下边界往上收。
+   *   所以真正能放下的内容高度 = 内边距盒高度 - padding-top
+   *                              = 174 - 12 = 162px
+   *   而 .vd-transcript 一行是 12.5px × 1.85 = 23.125px，
+   *   162 / 23.125 = 7 行整，第 8 行正好落在裁剪线之外。
+   *
+   *   之前写 186px 时多出 10px，第 8 行的字顶会露出 4px，
+   *   看起来像「内容被渲染截断」—— 实际是没对齐到行边界。
+   */
+  .vd-panel-body {
+    padding: 12px 14px;
+    max-height: 174px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /*
+   * 总结面板：主内容，不设高度上限，让它自然铺开，
+   * 由外层 modal-body 统一滚动（避免「滚动区里套滚动区」）。
+   */
+  .vd-panel-body.vd-flow { max-height: none; overflow: visible; }
+
+  /* 转写是纯文本：保留换行，用无衬线字体比等宽更好读 */
+  .vd-transcript {
+    font-family: var(--font);
+    font-size: 12.5px;
+    line-height: 1.85;
+    color: var(--ink-700);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .vd-note { margin-top: 9px; font-size: 11px; color: var(--amber-700); }
+
+  /* ─── Markdown 渲染（总结正文） ─── */
+  /*
+   * 前台 index.html / knowledge.html 各自带了一份 .md 样式，本页此前完全没有，
+   * 直接 md() 出来会是没有任何排版的裸 HTML（标题、加粗都看不出来）。
+   * 这里补一份给管理端用；本页只此一处用到 .md，不会外溢。
+   */
+  .md { font-size: 13px; line-height: 1.8; color: var(--ink-800); word-wrap: break-word; }
+  .md h1 { font-size: 16px; margin: 16px 0 8px; font-weight: 650; color: var(--ink-900); }
+  .md h2 {
+    font-size: 14.5px; margin: 18px 0 8px; font-weight: 650; color: var(--ink-900);
+    padding-left: 9px; border-left: 3px solid var(--amber-400);
+  }
+  .md h3 { font-size: 13.5px; margin: 14px 0 6px; font-weight: 600; color: var(--ink-800); }
+  .md h4 { font-size: 13px; margin: 12px 0 5px; font-weight: 600; color: var(--ink-700); }
+  .md p { margin: 8px 0; }
+  .md ul, .md ol { margin: 8px 0 8px 21px; }
+  .md li { margin: 3px 0; }
+  .md code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font-family: var(--mono); font-size: 12px; color: var(--amber-700);
+  }
+  .md pre {
+    background: var(--surface-2); padding: 12px; border-radius: var(--radius-sm);
+    overflow-x: auto; margin: 11px 0; border: 1px solid var(--border);
+  }
+  .md pre code { background: none; padding: 0; color: var(--ink-800); }
+  .md blockquote {
+    border-left: 3px solid var(--amber-300); padding: 2px 0 2px 12px;
+    margin: 10px 0; color: var(--ink-600);
+  }
+  .md table { border-collapse: collapse; margin: 11px 0; font-size: 12.5px; width: 100%; }
+  .md th, .md td { border: 1px solid var(--border); padding: 6px 10px; }
+  .md th { background: var(--surface-2); font-weight: 600; }
+  .md strong { color: var(--ink-900); font-weight: 650; }
+  .md a { color: var(--amber-600); }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 15px 0; }
+
+  /* 窄屏：封面铺满、元信息退成单列、转写再矮一点 */
+  @media (max-width: 560px) {
+    .vd-head { flex-direction: column; }
+    .vd-thumb { width: 100%; }
+    /* 窄屏放 6 行：151 - 12 = 139 ≈ 6 × 23.125 = 138.75，同样不露半截 */
+    .vd-panel-body { max-height: 151px; }
   }
 </style>
 </head>
@@ -193,7 +399,7 @@
         <span class="ico">⇄</span> 任务队列
       </div>
       <div class="nav-item" data-page="usage" onclick="go('usage')">
-        <span class="ico">◐</span> 额度用量
+        <span class="ico">◐</span> 用量统计
       </div>
     </nav>
 
@@ -226,6 +432,7 @@
 
 <div id="modal-root"></div>
 
+<script src="/static/vendor/marked.min.js"></script>
 <script src="/static/common.js"></script>
 <script>
 let ME = null;
@@ -235,7 +442,7 @@ const STATE = { page: {} };
 const TITLES = {
   overview: '概览', config: '密钥配置', users: '用户管理',
   invites: '邀请码', videos: '视频数据', articles: '文章数据',
-  jobs: '任务队列', usage: '额度用量',
+  jobs: '任务队列', usage: '用量统计',
 };
 
 /* ═══ 路由 ═══ */
@@ -271,11 +478,9 @@ const PAGES = {};
 PAGES.overview = async () => {
   const d = await API.get('/api/admin/overview');
   const q = d.queue || {};
-  const pct = d.asr.usage_percent || 0;
-  const cls = pct > 90 ? 'danger' : pct > 70 ? 'warn' : '';
 
   document.getElementById('content').innerHTML = `
-    <div class="grid grid-4 mb-2">
+    <div class="grid grid-3 mb-2">
       <div class="stat">
         <div class="stat-label">用户</div>
         <div class="stat-value">${d.users.active}</div>
@@ -290,27 +495,6 @@ PAGES.overview = async () => {
         <div class="stat-label">任务</div>
         <div class="stat-value">${d.jobs.running}</div>
         <div class="stat-sub">排队 ${d.jobs.pending} · 失败 ${d.jobs.error}</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">本月识别</div>
-        <div class="stat-value">${(d.asr.used_sec / 3600).toFixed(1)}<span style="font-size:14px">h</span></div>
-        <div class="stat-sub">共 ${d.asr.total_count} 次</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title"><span class="dot"></span> 语音识别额度（${d.asr.month}）</div>
-        <span class="badge ${pct > 90 ? 'badge-red' : pct > 70 ? 'badge-amber' : 'badge-green'}">${pct}%</span>
-      </div>
-      <div class="progress mb-2"><div class="progress-bar ${cls}" style="width:${Math.min(pct,100)}%"></div></div>
-      <div class="row-between text-sm muted">
-        <span>已用 ${fmtDuration(d.asr.used_sec)}</span>
-        <span>免费额度 ${fmtDuration(d.asr.quota_sec)}</span>
-      </div>
-      <div class="card-desc mt-2">
-       腾讯云录音文件识别每月赠送 10 小时免费额度，仅当月有效不结转。
-       额度耗尽后若未开启后付费，识别会直接失败并提示用户。
       </div>
     </div>
 
@@ -371,7 +555,7 @@ PAGES.config = async () => {
     '腾讯云语音识别': ['asr_secret_id', 'asr_secret_key', 'asr_region', 'asr_engine', 'asr_monthly_quota_sec'],
     '腾讯云对象存储': ['cos_secret_id', 'cos_secret_key', 'cos_region', 'cos_bucket', 'cos_domain'],
     '下载与代理': ['http_proxy', 'global_bili_cookie', 'ffmpeg_path'],
-    '业务开关': ['enable_asr', 'registration_open', 'site_notice'],
+    '业务开关': ['enable_asr', 'share_summary_across_users', 'registration_open', 'site_notice'],
   };
   const byKey = {};
   d.items.forEach(i => byKey[i.key] = i);
@@ -479,7 +663,6 @@ PAGES.users = async (page = 1, search = '') => {
   const d = await API.get(`/api/admin/users?page=${page}&page_size=20&search=${encodeURIComponent(search)}`);
 
   const rows = d.items.map(u => {
-    const quotaPct = u.asr_quota_sec ? Math.round(u.asr_used_sec / u.asr_quota_sec * 100) : 0;
     return `
     <tr>
       <td>
@@ -496,12 +679,6 @@ PAGES.users = async (page = 1, search = '') => {
         <div class="row" style="gap:4px">
           <span class="status-dot ${u.has_deepseek_key ? 'on' : 'off'}" title="DeepSeek Key"></span>
           <span class="status-dot ${u.has_bili_cookie ? 'on' : 'off'}" title="B站 Cookie"></span>
-        </div>
-      </td>
-      <td>
-        <div class="text-xs">${fmtDuration(u.asr_used_sec)} / ${fmtDuration(u.asr_quota_sec)}</div>
-        <div class="progress" style="margin-top:3px;width:90px">
-          <div class="progress-bar ${quotaPct > 90 ? 'danger' : ''}" style="width:${Math.min(quotaPct, 100)}%"></div>
         </div>
       </td>
       <td class="mono text-sm">${u.video_count} / ${u.article_count}</td>
@@ -527,7 +704,7 @@ PAGES.users = async (page = 1, search = '') => {
         <table>
           <thead><tr>
             <th>用户</th><th>角色</th><th>状态</th><th>凭证</th>
-            <th>本月识别</th><th>视频/文章</th><th>最后登录</th><th>操作</th>
+            <th>视频/文章</th><th>最后登录</th><th>操作</th>
           </tr></thead>
           <tbody>${rows || '<tr><td colspan="8"><div class="empty"><p>暂无用户</p></div></td></tr>'}</tbody>
         </table>
@@ -559,9 +736,12 @@ function newUser() {
       </select>
     </div>
     <div class="field">
-      <label>月度识别额度（秒）</label>
+      <label>月度识别上限（秒）</label>
       <input type="number" id="nu-quota" value="0" min="0">
-      <div class="hint">0 表示使用全局默认额度（10 小时）</div>
+      <div class="hint">
+        0 表示用全局默认值。这是<b>本站自己的软上限</b>，只用于防止单个用户跑掉太多音频；
+        它和腾讯云账号的额度是两回事，真正的额度以腾讯云控制台为准。
+      </div>
     </div>
   `, async () => {
     const r = await API.post('/api/admin/users', {
@@ -605,9 +785,12 @@ async function editUser(id) {
       </select>
     </div>
     <div class="field">
-      <label>月度识别额度（秒）</label>
+      <label>月度识别上限（秒）</label>
       <input type="number" id="eu-quota" value="${u.asr_quota_sec}" min="0">
-      <div class="hint">当前已用 ${fmtDuration(u.asr_used_sec)}</div>
+      <div class="hint">
+        0 表示用全局默认值。本站自己的软上限，与腾讯云账号额度无关。
+        该用户跑满后会被拦下，可用下方「重置用量统计」放行。
+      </div>
     </div>
     <div class="field">
       <label class="row" style="cursor:pointer">
@@ -659,8 +842,49 @@ async function delUser(id, name) {
 
 /* ═══ 邀请码 ═══ */
 
+/* 缓存一份列表，复制按钮只传 id，避免把邀请码拼进 onclick 属性里 */
+let INVITES = [];
+
+/**
+ * 邀请链接：用当前访问的 origin 拼，这样部署在任意域名/端口下都自动正确。
+ * 注册页会读取 invite 参数自动回显并切到注册 tab。
+ */
+function inviteLink(code) {
+  return `${location.origin}/login?invite=${encodeURIComponent(code)}`;
+}
+
+/**
+ * 判断当前是不是用本机/内网地址打开的后台。
+ * 这种地址拼出来的链接对别人是打不开的（127.0.0.1 指向对方自己的机器），
+ * 复制的瞬间提醒一句，省得对方反馈「链接打不开」时还要来回排查。
+ */
+function isLocalHostname(host) {
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+    || host === '' || /^10\./.test(host)
+    || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+}
+
+async function copyInviteLink(id) {
+  const row = INVITES.find(x => x.id === id);
+  if (!row) return err('列表已过期，请刷新页面重试');
+
+  const url = inviteLink(row.code);
+  const copied = await copyText(url);
+  if (!copied) {
+    // HTTP 部署下 execCommand 兜底也可能被浏览器策略挡掉，提示手动选中
+    return err('复制失败，请到「邀请码」列手动选中链接');
+  }
+
+  if (isLocalHostname(location.hostname)) {
+    err(`已复制，但地址是 ${location.hostname}，对方打不开；请改用公网域名访问后台再复制`);
+  } else {
+    ok('邀请链接已复制，对方点开会自动填好邀请码');
+  }
+}
+
 PAGES.invites = async () => {
   const d = await API.get('/api/admin/invites');
+  INVITES = d.items;
 
   const rows = d.items.map(c => {
     const full = c.used_count >= c.max_uses;
@@ -672,7 +896,12 @@ PAGES.invites = async () => {
       <td class="text-sm">${c.used_count} / ${c.max_uses}</td>
       <td class="text-xs muted">${c.expires_at || '永久'}</td>
       <td class="text-xs muted">${escapeHtml(c.note) || '—'}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="delInvite(${c.id})">删除</button></td>
+      <td>
+        <div class="actions">
+          <button class="btn btn-sm" onclick="copyInviteLink(${c.id})">复制链接</button>
+          <button class="btn btn-sm btn-danger" onclick="delInvite(${c.id})">删除</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
@@ -680,7 +909,8 @@ PAGES.invites = async () => {
     <div class="card">
       <div class="card-head">
         <div class="card-desc" style="margin:0">
-          用户凭邀请码注册。可在「密钥配置」中关闭注册开关。
+          用户凭邀请码注册。点「复制链接」发出的地址打开即自动填好邀请码，
+          对方不用手抄。可在「密钥配置」中关闭注册开关。
         </div>
         <button class="btn btn-primary btn-sm" onclick="newInvite()">生成邀请码</button>
       </div>
@@ -715,10 +945,19 @@ function newInvite() {
       note: document.getElementById('ni-note').value.trim(),
     });
     closeModal();
+    // 直接把参数展开，省得再刷新一次列表
+    INVITES = [{ id: r.id, code: r.code }, ...INVITES];
     showModal('邀请码已生成', `
-      <div class="text-sm">发给朋友即可注册：</div>
-      <div class="pwd-reveal">${escapeHtml(r.code)}</div>
+      <div class="text-sm muted">
+        把这条链接发给对方，点开会直接跳到注册页并填好邀请码：
+      </div>
+      <div class="pwd-reveal link">${escapeHtml(inviteLink(r.code))}</div>
+      <div class="field mt-2">
+        <label>对方只能手动输入时，用这个邀请码</label>
+        <div class="pwd-reveal">${escapeHtml(r.code)}</div>
+      </div>
     `, null, '知道了');
+    render();
     return true;
   });
 }
@@ -782,28 +1021,95 @@ PAGES.videos = async (page = 1, search = '') => {
 
 async function viewVideo(id) {
   const v = await API.get(`/api/admin/videos/${id}`);
+
+  const ts = v.transcript || '';
+  const sm = v.summary || '';
+
+  // 转写可能上万字，DOM 里塞全量意义不大（下面有「复制」拿完整内容）
+  const TS_LIMIT = 20000;
+  const truncated = ts.length > TS_LIMIT;
+
+  // 完整原文挂在 window 上，按钮按 key 取 —— 长文本塞进 onclick 属性
+  // 要处理引号/换行转义，很容易拼错
+  window.__vdText = { transcript: ts, summary: sm };
+
+  const SRC = {
+    asr: ['语音识别', 'badge-blue'],
+    subtitle: ['字幕', 'badge-green'],
+  };
+  const [srcLabel, srcCls] = SRC[v.transcript_source] || ['未记录', 'badge-gray'];
+
+  const badges = [
+    `<span class="badge ${srcCls}">${srcLabel}</span>`,
+    v.platform ? `<span class="badge badge-gray">${escapeHtml(v.platform)}</span>` : '',
+    v.duration_str ? `<span class="badge badge-gray">${escapeHtml(v.duration_str)}</span>` : '',
+    sm ? `<span class="badge badge-amber">总结 ${sm.length} 字</span>`
+       : `<span class="badge badge-red">未生成总结</span>`,
+    v.reused ? `<span class="badge badge-gray">复用他人结果</span>` : '',
+  ].filter(Boolean).join('');
+
+  // title 属性放完整值：.v 是单行省略，长 ID 会被截断
+  const metaItem = (k, val, mono) => `
+    <div class="vd-meta-item">
+      <span class="k">${k}</span>
+      <span class="v${mono ? ' mono' : ''}" title="${escapeHtml(val || '')}">${escapeHtml(val || '—')}</span>
+    </div>`;
+
+  const link = v.url
+    ? `<div class="vd-link">🔗 <a href="${escapeHtml(v.url)}" target="_blank" rel="noopener">${escapeHtml(v.url)}</a></div>`
+    : '';
+
   showModal('视频详情', `
-    <div class="field">
-      <label>标题</label>
-      <div class="text-sm">${escapeHtml(v.title)}</div>
+    <div class="vd-head">
+      <div class="vd-thumb">
+        ${(v.thumbnail_small || v.thumbnail) ? thumbTag(v.thumbnail_small, v.thumbnail, 'alt="封面" loading="lazy"') : '<span>无封面</span>'}
+      </div>
+      <div class="vd-headmain">
+        <div class="vd-title">${escapeHtml(v.title || '（无标题）')}</div>
+        <div class="vd-badges">${badges}</div>
+        ${link}
+      </div>
     </div>
-    <div class="grid grid-2" style="gap:10px">
-      <div class="kv"><span class="k">UP主</span><span class="v">${escapeHtml(v.uploader)}</span></div>
-      <div class="kv"><span class="k">所属用户</span><span class="v">${escapeHtml(v.owner)}</span></div>
-      <div class="kv"><span class="k">平台</span><span class="v">${escapeHtml(v.platform)}</span></div>
-      <div class="kv"><span class="k">时长</span><span class="v">${escapeHtml(v.duration_str)}</span></div>
-      <div class="kv"><span class="k">转写来源</span><span class="v">${escapeHtml(v.transcript_source || '—')}</span></div>
-      <div class="kv"><span class="k">处理时间</span><span class="v">${escapeHtml(v.processed_at)}</span></div>
+
+    <div class="vd-meta">
+      ${metaItem('UP主', v.uploader)}
+      ${metaItem('所属用户', v.owner)}
+      ${metaItem('视频 ID', v.vid, true)}
+      ${metaItem('处理时间', v.processed_at)}
     </div>
-    <div class="field mt-2">
-      <label>原文转写（${(v.transcript || '').length} 字）</label>
-      <textarea readonly style="height:170px;font-size:12px">${escapeHtml((v.transcript || '').slice(0, 4000))}</textarea>
+
+    <div class="vd-panel">
+      <div class="vd-panel-head">
+        <span class="vd-panel-title">原文转写</span>
+        <span class="vd-chip">${ts.length} 字</span>
+        ${ts ? `<button class="btn btn-sm vd-copy" onclick="vdCopy('transcript')">复制</button>` : ''}
+      </div>
+      <div class="vd-panel-body">
+        ${ts
+          ? `<div class="vd-transcript">${escapeHtml(ts.slice(0, TS_LIMIT))}</div>`
+          : '<div class="text-sm muted">（无转写内容）</div>'}
+        ${truncated ? `<div class="vd-note">仅显示前 ${TS_LIMIT} 字，完整内容请点「复制」</div>` : ''}
+      </div>
     </div>
-    <div class="field">
-      <label>总结（${(v.summary || '').length} 字）</label>
-      <textarea readonly style="height:230px;font-size:12px">${escapeHtml(v.summary || '（无）')}</textarea>
+
+    <div class="vd-panel">
+      <div class="vd-panel-head">
+        <span class="vd-panel-title">AI 总结</span>
+        <span class="vd-chip">${sm.length} 字</span>
+        ${sm ? `<button class="btn btn-sm vd-copy" onclick="vdCopy('summary')">复制</button>` : ''}
+      </div>
+      <div class="vd-panel-body vd-flow">
+        ${sm ? `<div class="md">${md(sm)}</div>` : '<div class="text-sm muted">（尚未生成总结）</div>'}
+      </div>
     </div>
-  `, null, '关闭');
+  `, null, '关闭', { wide: true, fill: true });
+}
+
+async function vdCopy(key) {
+  const text = (window.__vdText || {})[key] || '';
+  if (!text) return err('没有可复制的内容');
+  if (await copyText(text)) toast('已复制到剪贴板');
+  else err('复制失败，请手动选择文本');
 }
 
 async function delVideo(id) {
@@ -911,47 +1217,33 @@ async function delJob(id) {
   render();
 }
 
-/* ═══ 额度用量 ═══ */
+/* ═══ 用量统计 ═══ */
 
 PAGES.usage = async () => {
   const d = await API.get('/api/admin/usage');
 
-  const rows = d.items.map(u => {
-    const pct = u.usage_percent || 0;
-    return `
+  const rows = d.items.map(u => `
     <tr>
       <td class="text-sm" style="font-weight:500">${escapeHtml(u.username)}</td>
-      <td>
-        <div class="text-xs">${fmtDuration(u.asr_seconds)} / ${u.quota_str}</div>
-        <div class="progress" style="margin-top:3px;width:110px">
-          <div class="progress-bar ${pct > 90 ? 'danger' : pct > 70 ? 'warn' : ''}" style="width:${Math.min(pct,100)}%"></div>
-        </div>
-      </td>
-      <td class="text-sm mono">${pct}%</td>
-      <td class="text-sm">${u.asr_count}</td>
       <td class="text-sm">${u.summary_count}</td>
       <td class="text-sm mono">${(u.ai_tokens || 0).toLocaleString()}</td>
       <td><button class="btn btn-sm" onclick="showUserUsage(${u.user_id}, '${escapeHtml(u.username)}')">历史</button></td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
 
   document.getElementById('content').innerHTML = `
     <div class="card">
       <div class="card-head">
         <div class="card-title"><span class="dot"></span> ${d.year_month} 用量明细</div>
-        <div class="text-sm muted">默认额度 ${fmtDuration(d.default_quota_sec)}/月</div>
       </div>
       <div class="card-desc">
-        语音识别时长按「识别成功的音频时长」计费，仅当月有效不结转。
-        云厂商的计数与本地统计可能存在细微差异，以控制台账单为准。
+        DeepSeek 的 token 用量以服务商账单为准，这里统计的是本站自己的记账。
       </div>
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>用户</th><th>本月识别用量</th><th>占比</th><th>识别次数</th>
-            <th>总结次数</th><th>AI Tokens</th><th>操作</th>
+            <th>用户</th><th>总结次数</th><th>AI Tokens</th><th>操作</th>
           </tr></thead>
-          <tbody>${rows || '<tr><td colspan="7"><div class="empty"><p>本月暂无用量</p></div></td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="4"><div class="empty"><p>本月暂无用量</p></div></td></tr>'}</tbody>
         </table>
       </div>
     </div>
@@ -963,16 +1255,15 @@ async function showUserUsage(userId, username) {
   const rows = d.items.map(r => `
     <tr>
       <td class="text-sm mono">${r.year_month}</td>
-      <td class="text-sm">${r.asr_duration_str}</td>
-      <td class="text-sm">${r.asr_count}</td>
       <td class="text-sm">${r.summary_count}</td>
+      <td class="text-sm mono">${(r.ai_tokens || 0).toLocaleString()}</td>
     </tr>`).join('');
 
   showModal(`${username} · 历史用量`, `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>月份</th><th>识别时长</th><th>识别次数</th><th>总结次数</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="4"><div class="empty"><p>暂无记录</p></div></td></tr>'}</tbody>
+        <thead><tr><th>月份</th><th>总结次数</th><th>AI Tokens</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="3"><div class="empty"><p>暂无记录</p></div></td></tr>'}</tbody>
       </table>
     </div>
     <button class="btn btn-sm mt-2" onclick="cleanupAudio()">清理残留音频文件</button>
@@ -1011,12 +1302,17 @@ function __goPage(p) { if (__pagerFn) __pagerFn(p); }
 
 let __modalConfirm = null;
 
-function showModal(title, bodyHtml, onConfirm, closeText = '取消') {
+function showModal(title, bodyHtml, onConfirm, closeText = '取消', opts = null) {
   __modalConfirm = onConfirm;
+  // opts 可选：{ wide: 宽版, fill: 只让正文滚动（标题栏/按钮常驻） }
+  // 不传时行为与旧版完全一致，其余调用点无需改动
+  const o = opts || {};
+  const cls = ['modal', o.wide ? 'modal-wide' : '', o.fill ? 'modal-fill' : '']
+    .filter(Boolean).join(' ');
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-mask" onclick="if(event.target===this)closeModal()">
-      <div class="modal">
+      <div class="${cls}">
         <div class="modal-head">
           <span>${escapeHtml(title)}</span>
           <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>

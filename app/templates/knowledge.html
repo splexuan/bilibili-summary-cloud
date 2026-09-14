@@ -292,7 +292,7 @@ function paintVideos() {
   box.innerHTML = hits.map(v => `
     <div class="kb-item" data-id="${v.id}" onclick="previewVideo(${v.id})">
       <div class="kb-thumb">
-        ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" referrerpolicy="no-referrer">` : ''}
+        ${thumbTag(v.thumbnail_small, v.thumbnail)}
       </div>
       <div class="kb-info">
         <div class="kb-title">${escapeHtml(v.title)}</div>
@@ -426,7 +426,7 @@ async function previewVideo(id) {
       buttons: [{ text: '关闭', onclick: 'closeModal()' }],
       body: `
         <div class="pv-head">
-          ${d.thumbnail ? `<img src="${d.thumbnail}" alt="" referrerpolicy="no-referrer">` : '<div style="width:180px;aspect-ratio:16/9;border-radius:9px;background:var(--ink-100);flex-shrink:0"></div>'}
+          ${(d.thumbnail_small || d.thumbnail) ? thumbTag(d.thumbnail_small, d.thumbnail) : '<div style="width:180px;aspect-ratio:16/9;border-radius:9px;background:var(--ink-100);flex-shrink:0"></div>'}
           <div style="flex:1;min-width:0">
             <div class="text-xs muted mb-1">${escapeHtml(d.uploader || '')} · ${d.duration_str || ''}</div>
             <div class="text-xs muted mb-2">

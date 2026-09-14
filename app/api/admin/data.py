@@ -151,6 +151,17 @@ async def admin_get_video(video_id: int, admin: CurrentAdmin, db: DbSession):
 
     owner = await db.get(User, video.user_id)
 
+    # 封面：给前端一个可直接 <img> 的临时地址（详情弹窗要展示）。
+    # 同时给缩略图地址，弹窗里只显示 136px，没必要拉 130~210KB 的原图。
+    thumb, thumb_small = "", ""
+    try:
+        from app.services.cos_service import get_cos
+
+        cos = await get_cos(db)
+        thumb, thumb_small = cos.display_urls(video.thumbnail_key, expires=3600)
+    except Exception as exc:
+        logger.warning("生成封面地址失败: %s", exc)
+
     return {
         "id": video.id,
         "vid": video.vid,
@@ -163,7 +174,10 @@ async def admin_get_video(video_id: int, admin: CurrentAdmin, db: DbSession):
         "summary": video.summary,
         "transcript": video.transcript,
         "transcript_source": video.transcript_source,
+        "thumbnail": thumb,
+        "thumbnail_small": thumb_small,
         "thumbnail_key": video.thumbnail_key,
+        "reused": bool(video.copied_from_video_id),
         "processed_at": video.processed_at.strftime("%Y-%m-%d %H:%M") if video.processed_at else "",
     }
 
@@ -188,7 +202,7 @@ async def admin_delete_video(video_id: int, admin: CurrentAdmin, db: DbSession):
     user_id, vid = video.user_id, video.vid
     await db.delete(video)
 
-    clear_rag_cache(vid)
+    clear_rag_cache(user_id, vid)
     clear_kb_cache(user_id)
 
     logger.info("管理员 %s 删除视频 %s", admin.username, vid)

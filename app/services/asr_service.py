@@ -31,10 +31,20 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # 腾讯云错误码 → 用户可读提示
+#
+# 文案里必须写明「腾讯云账号」：这两个码说的是**腾讯云账号侧**的资源包/免费额度
+# 用完了，和本站给用户算的月度额度完全是两回事。写成「本月额度已用完」会让
+# 没用过 ASR 的用户莫名其妙（站点用量明明是 0）。
 _ERROR_HINTS = {
-    "FailedOperation.UserHasNoFreeAmount": "本月语音识别免费额度已用完，请等待下月重置或在后台开启后付费",
-    "FailedOperation.UserHasNoAmount": "语音识别资源包已耗尽",
-    "FailedOperation.UserNotRegistered": "语音识别服务尚未开通，请先前往腾讯云控制台开通",
+    "FailedOperation.UserHasNoFreeAmount": (
+        "腾讯云账号的语音识别免费额度已用完（不是本站给你的月度额度）。"
+        "请管理员到腾讯云控制台开通后付费或购买资源包"
+    ),
+    "FailedOperation.UserHasNoAmount": (
+        "腾讯云账号的语音识别资源包/额度已耗尽（不是本站给你的月度额度）。"
+        "请管理员到腾讯云控制台购买资源包或开通后付费"
+    ),
+    "FailedOperation.UserNotRegistered": "腾讯云语音识别服务尚未开通，请先前往腾讯云控制台开通",
     "FailedOperation.ServiceIsolate": "腾讯云账号因欠费已停止服务",
     "FailedOperation.ErrorDownFile": "腾讯云无法下载音频文件，请检查 COS 是否与服务器同地域",
     "InternalError.ErrorDownFile": "腾讯云无法下载音频文件，请检查 COS 配置",

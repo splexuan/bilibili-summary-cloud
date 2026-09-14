@@ -126,6 +126,31 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+
+/* ─── 封面图 ─── */
+
+/**
+ * 封面 <img>：优先加载 COS 压缩后的缩略图，失败自动退回原图。
+ *
+ * 服务端会同时给出 thumbnail_small（COS 实时压缩，比原图省 7~8 成流量）
+ * 和 thumbnail（原图）。若存储桶没开通图片处理，或以后换成不回源处理的
+ * CDN 域名，缩略图地址会返回 4xx，这时必须退回原图 —— 否则封面直接空掉。
+ * onerror 对 HTTP 4xx/5xx 是有效的，所以这个兜底能覆盖上述情况。
+ */
+function thumbTag(small, full, attrs = 'alt="" referrerpolicy="no-referrer"') {
+  const src = escapeHtml(small || full || '');
+  if (!src) return '';
+  return `<img src="${src}" data-full="${escapeHtml(full || '')}" `
+    + `onerror="thumbFallback(this)" ${attrs}>`;
+}
+
+/** 缩略图加载失败 → 换原图；原图同样失败就留空，避免来回递归 */
+function thumbFallback(el) {
+  el.onerror = null;
+  const full = el.getAttribute('data-full');
+  if (full && full !== el.getAttribute('src')) el.src = full;
+}
+
 function fmtTime(s) {
   return s || '—';
 }

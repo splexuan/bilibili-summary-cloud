@@ -123,6 +123,9 @@ class Video(Base):
     # 封面存 COS 对象键，不再是本地路径
     thumbnail_key: Mapped[str] = mapped_column(Text, default="")
 
+    # 跨用户复用时记录来源视频 id（NULL 表示本用户自己跑出来的）
+    copied_from_video_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # 转写来源：subtitle（字幕）/ asr（语音识别）/ manual
     transcript_source: Mapped[str] = mapped_column(String(16), default="")
     transcript: Mapped[str] = mapped_column(Text, default="")

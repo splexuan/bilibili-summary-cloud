@@ -103,6 +103,18 @@
     margin-top: 18px;
     line-height: 1.7;
   }
+
+  /* 邀请码由链接自动带入时，提示改成确认语气（用绿，和「出错」区分开） */
+  .hint.filled { color: var(--green-600); }
+
+  /*
+   * 深色下要单独提亮：common.css 只给 amber/ink/bg 等做了暗色覆盖，
+   * --green-600 (#2E7D5B) 保持原值，压在 --surface (#1D1B15) 上
+   * 对比度只有 3.4:1 —— 比默认的灰色提示还难读。
+   * 这里用一档亮绿提到 9:1，不去动全局变量（.badge-green 是靠浅色底
+   * 才读得清的，改了会让它在深色下变差）。
+   */
+  [data-theme="dark"] .hint.filled { color: #6FCFA3; }
 </style>
 </head>
 <body>
@@ -140,6 +152,7 @@
     <div class="field">
       <label>邀请码</label>
       <input type="text" id="reg-code" placeholder="向管理员索取" required>
+      <div class="hint" id="reg-code-hint">由管理员提供</div>
     </div>
     <div class="field">
       <label>用户名</label>
@@ -227,11 +240,44 @@ async function doRegister(e) {
   }
 }
 
-// 已登录则直接跳转
+/*
+ * 从邀请链接自动回显邀请码。
+ * 管理员在后台点「复制链接」拿到的是 /login?invite=XXXX，用户点开即落在
+ * 注册页、邀请码已填好，不必手抄 16 位随机码 —— 这类码肉眼抄写很容易错。
+ */
+function applyInviteFromUrl() {
+  const q = new URLSearchParams(location.search);
+  // 参数名认两个：链接可能被聊天工具或手工改写
+  const code = (q.get('invite') || q.get('code') || '').trim();
+
+  if (!code) {
+    // 只带了 #register 也要落到注册页
+    if (location.hash === '#register') switchTab('register');
+    return;
+  }
+
+  switchTab('register');
+
+  const input = document.getElementById('reg-code');
+  input.value = code;
+
+  const hint = document.getElementById('reg-code-hint');
+  if (hint) {
+    hint.textContent = '已从邀请链接自动填入，填好用户名和密码即可';
+    hint.classList.add('filled');
+  }
+
+  // 邀请码不用手输了，光标直接落到下一个要填的框
+  document.getElementById('reg-username').focus();
+}
+
+// 已登录则直接跳转，此时不再处理邀请码
 if (API.token) {
   API.get('/api/auth/me')
     .then(() => { location.href = nextUrl(); })
     .catch(() => API.setToken(''));
+} else {
+  applyInviteFromUrl();
 }
 </script>
 </body>

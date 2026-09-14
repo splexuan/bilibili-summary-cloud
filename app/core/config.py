@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     allow_user_own_key: bool = True
 
+    # ─── 跨用户复用 ───
+    # 别人已总结过同一个视频时，直接复制其「转写 + 总结」快照，
+    # 省掉一次音频下载与 ASR（额度、时间、COS 流量）。后台可关闭。
+    share_summary_across_users: bool = True
+
     # ─── 下载与代理 ───
     http_proxy: str = ""
     global_cookie_file: str = ""

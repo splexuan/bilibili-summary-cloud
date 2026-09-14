@@ -206,6 +206,99 @@
 
   /* 识别额度条与其样式 .usage-bar 已移除（进度条样式在 common.css） */
 
+  /* ─── 工作台引导：右侧结果区空状态 ─── */
+  /*
+   * 结果区占半屏，没结果时原样是一片空白。这里放引导而不是留白，
+   * 顺带把「结果区能干什么」交代清楚 —— 工具条在没结果时是隐藏的，
+   * 用户看得到按钮之前不知道有哪些能力。
+   */
+  /*
+   * min-height:100% + flex 居中：把「内容比面板短时全挤在顶部」的留白
+   * 上下均摊。这里不会触发 flexbox 居中导致溢出内容顶部被裁的经典问题 ——
+   * 该问题只在内容高于容器时出现，而空状态永远比面板矮。
+   */
+  .wb-hero {
+    text-align: center; padding: 38px 22px 30px;
+    min-height: 100%;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+
+  .wb-hero-ico {
+    width: 46px; height: 46px; margin: 0 auto 14px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, var(--amber-400), var(--amber-600));
+    color: #fff; font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 3px 12px rgba(216, 146, 59, .3);
+  }
+  .wb-hero h3 {
+    font-size: 15px; font-weight: 600;
+    color: var(--ink-800); margin-bottom: 7px;
+  }
+  .wb-hero > p {
+    font-size: 12.5px; color: var(--ink-500); line-height: 1.75;
+    max-width: 380px; margin: 0 auto;
+  }
+
+  /* 处理流程：解析 → 取字幕 → 无字幕则转写 → AI 总结 */
+  .wb-flow {
+    display: flex; align-items: center; justify-content: center;
+    flex-wrap: wrap; gap: 6px; margin: 20px 0 0;
+  }
+  .wb-flow span {
+    font-size: 11.5px; color: var(--ink-600);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 20px; padding: 3px 11px;
+    white-space: nowrap;
+  }
+  .wb-flow i { font-style: normal; color: var(--ink-400); font-size: 11px; }
+
+  /* 结果区功能：用 1px 背景做分隔线，深浅主题都不用另写 */
+  .wb-feat {
+    display: grid; gap: 1px; margin-top: 22px; text-align: left;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .wb-feat-item { background: var(--surface); padding: 10px 12px; }
+  .wb-feat-item b {
+    display: block; font-size: 12px; font-weight: 600;
+    color: var(--ink-800); margin-bottom: 2px;
+  }
+  .wb-feat-item span { font-size: 11px; color: var(--ink-500); line-height: 1.5; }
+
+  /* ─── 工作台引导：左侧「使用说明」卡片 ─── */
+  .wb-guide { display: flex; flex-direction: column; gap: 10px; }
+  .wb-guide-row { display: flex; gap: 10px; align-items: flex-start; }
+  .wb-guide-row .badge { flex-shrink: 0; margin-top: 1px; }
+  .wb-guide-row p { font-size: 12.5px; color: var(--ink-600); line-height: 1.7; }
+  .wb-guide-row code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  /* ─── 工作台引导：常见问题 ─── */
+  .wb-faq { display: flex; flex-direction: column; gap: 9px; }
+  .wb-faq dt {
+    font-size: 12.5px; font-weight: 600; color: var(--ink-800);
+    margin-bottom: 3px;
+  }
+  .wb-faq dt::before {
+    content: 'Q';
+    font-family: var(--mono); font-size: 9.5px; line-height: 15px;
+    color: var(--amber-700); background: var(--amber-100);
+    border-radius: 4px; padding: 0 4px; margin-right: 7px;
+    display: inline-block; vertical-align: 1px;
+  }
+  .wb-faq dd {
+    font-size: 12.5px; color: var(--ink-600); line-height: 1.7;
+    margin-left: 26px;
+  }
+
   @media (max-width: 1000px) {
     .sidebar { position: static; height: auto; width: 100%; }
     .app { flex-direction: column; }
@@ -214,6 +307,8 @@
        让整页自然滚动更顺手 */
     .scroll-panel { height: auto; min-height: 0; }
     .scroll-panel > .scroll-body { overflow-y: visible; }
+
+    .wb-hero { padding: 24px 14px; }
   }
 </style>
 </head>
@@ -465,6 +560,44 @@ PAGES.work = async () => {
             </div>
           </div>
         </div>
+
+        <!-- 使用说明：放在最下面，处理中的进度卡就会紧跟提交卡，不被挤开 -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title"><span class="dot"></span> 使用说明</div>
+          </div>
+          <div class="wb-guide">
+            <div class="wb-guide-row">
+              <span class="badge badge-amber">支持</span>
+              <p>B站视频与番剧（含 <code>b23.tv</code> 短链）、YouTube，也可以直接粘贴文章正文。</p>
+            </div>
+            <div class="wb-guide-row">
+              <span class="badge badge-green">字幕优先</span>
+              <p>有 CC 字幕时直接取字幕，几秒就好；没有才会下载音频做语音识别，慢一些。</p>
+            </div>
+            <div class="wb-guide-row">
+              <span class="badge badge-blue">省时间</span>
+              <p>站内已有人总结过同一个视频时，会直接复用那份结果。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 常见问题：问题式陈述比罗列功能更好扫读，也回答了几个真正的疑问 -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title"><span class="dot"></span> 常见问题</div>
+          </div>
+          <dl class="wb-faq">
+            <dt>要等多久？</dt>
+            <dd>有字幕的几秒就好；要走语音识别的长视频可能要几分钟。</dd>
+
+            <dt>能同时提交多个吗？</dt>
+            <dd>不能，同一账号同时只跑一个任务。</dd>
+
+            <dt>关掉页面会怎样？</dt>
+            <dd>任务在服务端继续跑完，结果会存进「我的内容」。</dd>
+          </dl>
+        </div>
       </div>
 
       <!-- 右：结果 -->
@@ -484,7 +617,30 @@ PAGES.work = async () => {
             <span class="result-meta" id="result-meta"></span>
           </div>
 
-          <div class="md scroll-body" id="result-body" style="padding-top:12px"></div>
+          <div class="md scroll-body" id="result-body" style="padding-top:12px">
+            <!-- 空状态：有结果后由 paintResult() 整体覆盖 -->
+            <div class="wb-hero">
+              <div class="wb-hero-ico">✦</div>
+              <h3>总结结果会显示在这里</h3>
+              <p>粘贴 B站 / YouTube 链接，或切到「粘贴文章」贴入正文，点「开始」即可。</p>
+
+              <div class="wb-flow">
+                <span>解析内容</span><i>→</i>
+                <span>优先取字幕</span><i>→</i>
+                <span>无字幕则转写</span><i>→</i>
+                <span>AI 总结</span>
+              </div>
+
+              <div class="wb-feat">
+                <div class="wb-feat-item"><b>复制 / 下载 MD</b><span>结果可一键带走</span></div>
+                <div class="wb-feat-item"><b>查看文字稿</b><span>追溯原文出处</span></div>
+                <div class="wb-feat-item"><b>朗读</b><span>把总结读出来听</span></div>
+                <div class="wb-feat-item"><b>重新总结</b><span>换个角度再来一次</span></div>
+                <div class="wb-feat-item"><b>就此内容提问</b><span>基于原文继续追问</span></div>
+                <div class="wb-feat-item"><b>自动保存</b><span>结果存入「我的内容」</span></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -879,8 +1035,14 @@ function paintVideoInfo(info) {
   document.getElementById('vid-title').textContent = info.title || '—';
   document.getElementById('vid-meta').textContent =
     [info.uploader, info.duration_str || info.duration].filter(Boolean).join(' · ') || '—';
-  if (info.thumbnail) {
-    document.getElementById('vid-thumb').src = info.thumbnail;
+
+  // 先用 COS 压缩后的小图，失败自动退回原图（与列表里的 thumbTag 同一套逻辑）
+  const img = document.getElementById('vid-thumb');
+  const src = info.thumbnail_small || info.thumbnail || '';
+  if (src) {
+    img.setAttribute('data-full', info.thumbnail || '');
+    img.onerror = function () { thumbFallback(this); };
+    if (img.getAttribute('src') !== src) img.src = src;
   }
 }
 
@@ -896,8 +1058,10 @@ async function openContent(kind, id, stayInWork) {
         kind: 'video', id: d.id, title: d.title, summary: d.summary,
         hasTranscript: d.has_transcript, url: d.url,
         uploader: d.uploader, duration: d.duration_str,
-        thumbnail: d.thumbnail, processedAt: d.processed_at,
+        thumbnail: d.thumbnail, thumbnailSmall: d.thumbnail_small,
+        processedAt: d.processed_at,
         transcriptSource: d.transcript_source,
+        reused: d.reused,
       };
     } else {
       const d = await API.get(`/api/articles/${id}`);
@@ -935,6 +1099,7 @@ function openDetailModal() {
     if (VIEW.transcriptSource) {
       meta.push('文字稿来源：' + (VIEW.transcriptSource === 'asr' ? '语音识别' : '字幕'));
     }
+    if (VIEW.reused) meta.push('此条复用了站内已有的总结结果');
   }
   if (VIEW.processedAt) meta.push('处理于 ' + VIEW.processedAt);
 
@@ -984,8 +1149,8 @@ function paintResult() {
 
   if (VIEW.kind === 'video' && (VIEW.thumbnail || VIEW.uploader || VIEW.duration)) {
     paintVideoInfo({
-      title: VIEW.title, uploader: VIEW.uploader,
-      duration_str: VIEW.duration, thumbnail: VIEW.thumbnail,
+      title: VIEW.title, uploader: VIEW.uploader, duration_str: VIEW.duration,
+      thumbnail: VIEW.thumbnail, thumbnail_small: VIEW.thumbnailSmall,
     });
     document.getElementById('vid-card').classList.remove('hidden');
   }
@@ -1173,7 +1338,7 @@ function paintHistory(total) {
     return `
       <div class="history-item" data-id="${it.id}">
         <div class="hi-thumb">
-          ${it.thumbnail ? `<img src="${it.thumbnail}" alt="" referrerpolicy="no-referrer">` : ''}
+          ${thumbTag(it.thumbnail_small, it.thumbnail)}
         </div>
         <div class="hi-body" onclick="openContent('video', ${it.id})">
           <div class="hi-title">${escapeHtml(it.title)}</div>
@@ -1181,6 +1346,7 @@ function paintHistory(total) {
           <div class="hi-tags">
             ${it.has_summary ? '<span class="hi-tag sum">总结</span>' : '<span class="hi-tag">未总结</span>'}
             ${it.transcript_source === 'asr' ? '<span class="hi-tag ts">识别</span>' : ''}
+            ${it.reused ? '<span class="hi-tag">复用</span>' : ''}
           </div>
         </div>
         <button class="hi-btn-del" title="删除"

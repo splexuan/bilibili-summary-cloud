@@ -10,6 +10,7 @@
 - 粗筛 Top5 → 精查
 """
 import hashlib
+import json
 import re
 from collections import OrderedDict
 
@@ -126,32 +127,62 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
 
 
-def rag_search(vid: str, transcript: str, query: str, top_k: int = RAG_TOP_K) -> list[str]:
-    """在单个视频/文章的原文中检索相关段落"""
+def _rag_key(user_id: int, vid: str) -> str:
+    return f"u{user_id}:{vid}"
+
+
+def rag_search(
+    user_id: int,
+    vid: str,
+    transcript: str,
+    query: str,
+    top_k: int = RAG_TOP_K,
+) -> list[str]:
+    """
+    在某个用户自己的某条内容原文中检索相关段落。
+
+    缓存键必须带上 user_id，不能只用 vid：
+    videos 表的唯一约束是 (user_id, vid)，**vid 本身不唯一** ——
+    两个用户总结同一个 BV 号时会拿到同一个 vid。只用 vid 做键的话，
+    两边内容不同就会反复把对方的索引挤掉，每个请求都重建一次 TF-IDF；
+    内容相同时结果虽然正确，但两个用户的缓存本就该各归各的。
+    """
     if not transcript:
         return []
 
+    key = _rag_key(user_id, vid)
     fp = _fingerprint(transcript)
-    cached = _rag_cache.get(vid)
+    cached = _rag_cache.get(key)
 
     if cached and cached[0] == fp:
-        _rag_cache.move_to_end(vid)
+        _rag_cache.move_to_end(key)
         engine = cached[1]
     else:
         engine = RAGEngine().build(transcript)
-        _rag_cache[vid] = (fp, engine)
-        _rag_cache.move_to_end(vid)
+        _rag_cache[key] = (fp, engine)
+        _rag_cache.move_to_end(key)
         while len(_rag_cache) > RAG_CACHE_MAX:
             _rag_cache.popitem(last=False)
 
     return engine.search(query, top_k)
 
 
-def clear_rag_cache(vid: str | None = None) -> None:
-    if vid:
-        _rag_cache.pop(vid, None)
-    else:
+def clear_rag_cache(user_id: int | None = None, vid: str | None = None) -> None:
+    """
+    清 RAG 缓存（与 below 的 clear_kb_cache 同形状）：
+    - 都不传：全清
+    - 只传 user_id：清该用户的所有内容
+    - 传 user_id + vid：只清这一条
+    """
+    if user_id is None:
         _rag_cache.clear()
+        return
+    if vid is None:
+        prefix = f"u{user_id}:"
+        for k in [k for k in _rag_cache if k.startswith(prefix)]:
+            _rag_cache.pop(k, None)
+        return
+    _rag_cache.pop(_rag_key(user_id, vid), None)
 
 
 # ═══════════════════════════════════════════
@@ -255,8 +286,14 @@ _kb_cache: dict[str, tuple[str, KBIndex]] = {}
 
 def build_kb_index(user_id: int, items: list[dict]) -> KBIndex:
     """构建知识库索引（带指纹缓存，内容未变则复用）"""
+    # 指纹必须覆盖条目的**全部字段**，原来只算 text 的长度有两个问题：
+    #   1. 改成长度相同的另一段文字会被判定为"没变"，复用旧索引
+    #   2. title / kind 不参与（KBIndex 把它们原样存在 .meta 里，调用方
+    #      拿它展示来源标题），改了标题仍返回旧 meta
+    # 直接对整个 items 做规范化序列化，好处是以后加字段不会漏 ——
+    # 代价是每次要序列化一遍正文，但那也远小于它省下的 TF-IDF 重算。
     fp = hashlib.sha1(
-        "|".join(f"{it['key']}:{len(it.get('text') or '')}" for it in items).encode()
+        json.dumps(items, sort_keys=True, ensure_ascii=False, default=str).encode()
     ).hexdigest()
 
     cache_key = f"u{user_id}"

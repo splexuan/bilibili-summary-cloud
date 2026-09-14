@@ -50,6 +50,7 @@ SETTING_DEFS: list[dict[str, Any]] = [
 
     # 业务开关
     {"key": "enable_asr", "desc": "启用语音识别兜底", "secret": False, "env": None},
+    {"key": "share_summary_across_users", "desc": "跨用户复用已总结的视频（true / false）", "secret": False, "env": "share_summary_across_users"},
     {"key": "site_notice", "desc": "前台公告", "secret": False, "env": None},
     {"key": "registration_open", "desc": "开放邀请码注册", "secret": False, "env": None},
 ]

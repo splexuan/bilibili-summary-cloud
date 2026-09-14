@@ -36,8 +36,11 @@ from app.core.titling import generate_title, is_placeholder_title
 from app.core.progress import (
     add_asr_usage,
     append_summary_chunk,
+    clear_asr_quota_blocked,
     clear_summary,
+    get_asr_quota_blocked,
     get_asr_usage,
+    mark_asr_quota_blocked,
     mark_done,
     mark_error,
     release_user_slot,
@@ -244,7 +247,7 @@ async def _process_resummarize(job_id: int, user_id: int) -> None:
         video_vid = video.vid
 
     if video_vid:
-        clear_rag_cache(video_vid)
+        clear_rag_cache(user_id, video_vid)
 
 
 # ═══════════════════════════════════════════
@@ -269,21 +272,39 @@ async def _process_video(job_id: int, user_id: int, params: dict) -> None:
             proxy=await get_setting(db, "http_proxy", ""),
         )
 
+        reused_from = 0
+
         if video is None:
-            # 首次创建
             info = await asyncio.to_thread(runner.fetch_info, url)
             vid = validate_vid(info["vid"])
-            video = Video(
-                user_id=user_id,
-                vid=vid,
-                url=info["url"],
-                title=info["title"],
-                uploader=info["uploader"],
-                duration=info["duration"],
-                duration_str=info["duration_str"],
-                platform=info["platform"],
-            )
-            db.add(video)
+
+            # 新任务里 job.video_id 恒为 None，所以「自己库里已有的行」查不到。
+            # 同一用户重复提交同一个视频时必须按 (user_id, vid) 复用，
+            # 否则下面的 Video(...) 会撞 uq_videos_user_vid，任务直接崩。
+            video = (
+                await db.execute(
+                    select(Video).where(Video.user_id == user_id, Video.vid == vid)
+                )
+            ).scalar_one_or_none()
+
+            if video is None:
+                video = Video(
+                    user_id=user_id,
+                    vid=vid,
+                    url=info["url"],
+                    title=info["title"],
+                    uploader=info["uploader"],
+                    duration=info["duration"],
+                    duration_str=info["duration_str"],
+                    platform=info["platform"],
+                )
+                # 别人已经总结过这个视频 → 复制一份快照，跳过下载/ASR/AI
+                if await is_enabled(db, "share_summary_across_users", True):
+                    reused_from = await _copy_shared_snapshot(db, video, vid, user_id)
+                db.add(video)
+
+            # 必须先 flush：session 配了 autoflush=False，db.add() 不会立刻
+            # 分配自增主键，直接读 video.id 会拿到 None，job.video_id 就丢了。
             await db.flush()
             job.video_id = video.id
             await db.flush()
@@ -303,12 +324,9 @@ async def _process_video(job_id: int, user_id: int, params: dict) -> None:
         title = video.title
         duration_sec = _to_int(video.duration)
 
-        # 缓存命中：已有转写与总结
-        if video.transcript and video.summary and not params.get("force"):
-            set_progress(job_id, JobStage.SUMMARIZING, "已存在总结，跳过处理")
-            return
-
         # ─── 2. 封面 ───
+        # 放在「缓存命中」判断之前：复用的那份也要有封面，
+        # 否则历史列表里这条会是空白图
         thumbnail_url = info.get("thumbnail") or ""
         if thumbnail_url and not video.thumbnail_key:
             try:
@@ -320,6 +338,15 @@ async def _process_video(job_id: int, user_id: int, params: dict) -> None:
                     video.thumbnail_key = key
             except Exception as exc:
                 logger.warning("封面上传失败，忽略: %s", exc)
+
+        # 缓存命中：已有转写与总结（含刚复制过来的快照）
+        if video.transcript and video.summary and not params.get("force"):
+            set_progress(
+                job_id,
+                JobStage.SUMMARIZING,
+                "已复用站内已有总结，跳过处理" if reused_from else "已存在总结，跳过处理",
+            )
+            return
 
     # ─── 3. 获取文本：字幕优先，ASR 兜底 ───
     transcript = None
@@ -383,7 +410,7 @@ async def _process_video(job_id: int, user_id: int, params: dict) -> None:
         video.processed_at = datetime.now(timezone.utc)
         await _record_ai_usage(db, user_id, result.get("tokens", 0))
 
-    clear_rag_cache(vid)
+    clear_rag_cache(user_id, vid)
 
 
 # ═══════════════════════════════════════════
@@ -401,17 +428,27 @@ async def _transcribe_via_asr(
 ) -> str:
     """下载音频 → 转码 → 上传 COS → 提交识别 → 轮询 → 落库 → 清理"""
 
-    # 额度前置检查
+    # 腾讯云账号侧额度刚被拒过 → 直接失败。
+    # 这个判断必须放在下载之前：否则每次重试都要先白下载一份音频传上 COS
+    # （几十秒 + 一份流量），最后才拿到同一句「额度耗尽」。
+    blocked = get_asr_quota_blocked()
+    if blocked:
+        raise QuotaExceededError(blocked)
+
+    # 本站月度上限前置检查。
+    # 这个上限是纯本地记账，与腾讯云账号额度无关，站内也不再展示它的数字——
+    # 所以报错文案不报「剩余多少分钟」，只说明是被本站的保护策略拦下的。
     async with session_scope() as db:
         quota = int(await get_setting(db, "asr_monthly_quota_sec", "36000") or 36000)
 
     used = get_asr_usage(user_id)
     if quota > 0 and duration_sec and (used + duration_sec) > quota:
-        remain_min = max(0, quota - used) // 60
+        need_min = max(1, duration_sec // 60)
         raise QuotaExceededError(
-            f"本月语音识别额度不足（剩余约 {remain_min} 分钟），"
-            "该视频需要转写约 "
-            f"{duration_sec // 60} 分钟。请等待下月额度重置或联系管理员。"
+            f"该视频没有字幕，需要语音识别转写约 {need_min} 分钟，"
+            "已超出本站为该账号设置的月度识别上限。"
+            "这是本站的用量保护，与腾讯云账号额度无关；"
+            "请联系管理员调整或等待下月重置。"
         )
 
     with tempfile.TemporaryDirectory(prefix="bsum_job_") as tmp:
@@ -472,7 +509,12 @@ async def _transcribe_via_asr(
             set_progress(job_id, JobStage.ASR_SUBMITTING, "正在提交识别任务…")
             async with session_scope() as db:
                 asr = await get_asr(db)
-                task_id = await asyncio.to_thread(asr.create_task, audio_url, duration_sec)
+                try:
+                    task_id = await asyncio.to_thread(asr.create_task, audio_url, duration_sec)
+                except QuotaExceededError as exc:
+                    # 腾讯云账号侧额度不可用：记一笔熔断，后续重试直接失败
+                    mark_asr_quota_blocked(exc.message)
+                    raise
 
                 row = ASRTask(
                     user_id=user_id,
@@ -524,6 +566,7 @@ async def _transcribe_via_asr(
 
             add_asr_usage(user_id, real_dur)
             await _sync_usage_to_db(user_id, real_dur)
+            clear_asr_quota_blocked()
 
             logger.info(
                 "ASR 转写完成 video_id=%s，%d 字，音频 %d 秒",
@@ -542,6 +585,55 @@ async def _transcribe_via_asr(
 # ═══════════════════════════════════════════
 # 辅助
 # ═══════════════════════════════════════════
+
+async def _copy_shared_snapshot(db, video: Video, vid: str, user_id: int) -> int:
+    """
+    找「别的用户」已处理好的同一个视频，把转写/总结复制进 video（此时还没 add）。
+
+    返回来源 video.id；没找到返回 0。
+
+    为什么复制快照而不是让多个用户共用同一行：
+      - 「重新总结」「删除」会互相影响：A 删掉自己那条，B 的总结就跟着没了
+      - 管理员看数据时分不清到底是谁处理的
+      - 各行独立后，权限校验也不用改（仍然是 user_id 过滤自己那份）
+    代价只是多存一份文本，比重新下载音频 + 走一次 ASR 便宜得多。
+
+    只复制文本。封面 / COS 对象键 / Cookie 一概不动：那些是用户私有资源，
+    而且共用同一个对象键会导致一方删除时把另一方的图也删掉。
+
+    vid 是平台的视频 ID（如 BV1xx），全局唯一，所以能跨用户对上。
+    """
+    src = (
+        await db.execute(
+            select(Video)
+            .where(
+                Video.vid == vid,
+                Video.user_id != user_id,
+                Video.transcript != "",
+            )
+            # 有总结的优先（能一次到位），其次取最近处理过的
+            .order_by((Video.summary == "").asc(), Video.processed_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+    if src is None:
+        return 0
+
+    video.transcript = src.transcript
+    video.transcript_source = src.transcript_source
+    video.summary = src.summary
+    video.copied_from_video_id = src.id
+    if src.summary:
+        video.processed_at = datetime.now(timezone.utc)
+
+    logger.info(
+        "跨用户复用: vid=%s ← video_id=%s（user %s），转写 %d 字%s",
+        vid, src.id, src.user_id, len(src.transcript),
+        "，含总结" if src.summary else "，无总结（仍需重跑 AI）",
+    )
+    return src.id
+
 
 async def _try_fetch_subtitle(
     runner: YtDlpRunner, url: str, platform: str, job_id: int
