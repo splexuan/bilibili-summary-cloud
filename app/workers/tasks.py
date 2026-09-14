@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.constants import ASRStatus, JobStage, JobStatus, JobType, TranscriptSource
+from app.core.cookies import to_netscape
 from app.core.exceptions import (
     AIError,
     AppError,
@@ -28,10 +29,14 @@ from app.core.exceptions import (
     COSError,
     DownloadError,
     QuotaExceededError,
+    SubtitleUnavailable,
 )
 from app.core.logging import get_logger
+from app.core.titling import generate_title, is_placeholder_title
 from app.core.progress import (
     add_asr_usage,
+    append_summary_chunk,
+    clear_summary,
     get_asr_usage,
     mark_done,
     mark_error,
@@ -49,16 +54,22 @@ from app.db.settings_repo import (
 from app.services.asr_service import get_asr
 from app.services.cos_service import get_cos
 from app.services.downloader import (
+    SUBTITLE_PLATFORMS,
     YtDlpRunner,
     audio_duration,
     find_ffmpeg,
+    is_blocking_reason,
     transcode_for_asr,
     validate_vid,
 )
 from app.services.retrieval import clear_kb_cache, clear_rag_cache
-from app.services.summarizer import DeepSeekClient, summarize_sync
+from app.services.summarizer import DeepSeekClient, summarize_stream_collect
 
 logger = get_logger(__name__)
+
+# 字幕提取失败后的重试间隔（秒）。比直接下载整个音频划算得多：
+# 一次音频下载 + ASR 要花额度、时间和 COS 流量，重试字幕只要几十秒。
+SUBTITLE_RETRY_DELAY = 3
 
 
 # ═══════════════════════════════════════════
@@ -114,7 +125,9 @@ async def _run_summarize_job(job_id: int, user_id: int) -> None:
         params = json.loads(job.params or "{}")
 
     try:
-        if job.type == JobType.SUMMARIZE_ARTICLE:
+        if job.type == JobType.RE_SUMMARIZE:
+            await _process_resummarize(job_id, user_id)
+        elif job.type == JobType.SUMMARIZE_ARTICLE:
             await _process_article(job_id, user_id)
         else:
             await _process_video(job_id, user_id, params)
@@ -162,16 +175,76 @@ async def _process_article(job_id: int, user_id: int) -> None:
         if not text.strip():
             raise AppError("文章内容为空")
 
-        result = summarize_sync(
-            client,
-            text,
-            title,
-            on_progress=lambda msg: set_progress(job_id, JobStage.SUMMARIZING, msg),
-        )
+        result = await _run_summary(job_id, client, text, title)
 
         article.summary = result["summary"]
         article.processed_at = datetime.now(timezone.utc)
+
+        # 仍是占位名 → 提交时没能提取到（用户也没填），总结完成后按本地版
+        # 再提取一次（纯字符串处理，不额外调用 AI）
+        if is_placeholder_title(article.title):
+            better = generate_title(article.text or "", fallback="")
+            if better:
+                article.title = better
+
         await _record_ai_usage(db, user_id, result.get("tokens", 0))
+
+
+async def _process_resummarize(job_id: int, user_id: int) -> None:
+    """
+    重新总结：复用库里已有的转写 / 正文，只重跑 AI。
+
+    不重新下载、不重新走 ASR —— 换了模型或提示词时，能省下一次
+    语音识别的钱和几十秒等待（本地版 resummarize 的等价实现）。
+    """
+    video_vid = ""
+
+    async with session_scope() as db:
+        job = await db.get(Job, job_id)
+        if not job:
+            raise AppError("任务不存在")
+
+        user = await db.get(User, user_id)
+        client = await _build_ai_client(db, user)
+
+        if job.article_id:
+            article = await db.get(Article, job.article_id)
+            if not article:
+                raise AppError("文章记录不存在")
+            text = article.text or ""
+            if not text.strip():
+                raise AppError("文章内容为空，无法重新总结")
+
+            set_progress(job_id, JobStage.SUMMARIZING, "正在重新总结…")
+            result = await _run_summary(job_id, client, text, article.title or "未命名文章")
+
+            article.summary = result["summary"]
+            article.processed_at = datetime.now(timezone.utc)
+            if is_placeholder_title(article.title):
+                better = generate_title(article.text or "", fallback="")
+                if better:
+                    article.title = better
+            await _record_ai_usage(db, user_id, result.get("tokens", 0))
+            return
+
+        video = await db.get(Video, job.video_id) if job.video_id else None
+        if not video:
+            raise AppError("视频记录不存在")
+
+        transcript = video.transcript or ""
+        if not transcript.strip():
+            raise AppError("该视频没有转写内容，请重新提交完整处理")
+
+        set_progress(job_id, JobStage.SUMMARIZING, "正在重新总结…")
+        result = await _run_summary(job_id, client, transcript, video.title)
+
+        video.summary = result["summary"]
+        video.processed_at = datetime.now(timezone.utc)
+        await _record_ai_usage(db, user_id, result.get("tokens", 0))
+        video_vid = video.vid
+
+    if video_vid:
+        clear_rag_cache(video_vid)
 
 
 # ═══════════════════════════════════════════
@@ -265,11 +338,7 @@ async def _process_video(job_id: int, user_id: int, params: dict) -> None:
                 cookie_file=await _resolve_cookie_file(db, user),
                 proxy=await get_setting(db, "http_proxy", ""),
             )
-            try:
-                subtitle = await asyncio.to_thread(runner.fetch_subtitle, url, platform)
-            except DownloadError as exc:
-                logger.warning("字幕提取异常，转 ASR 兜底: %s", exc)
-                subtitle = None
+            subtitle = await _try_fetch_subtitle(runner, url, platform, job_id)
 
             if subtitle and subtitle.strip():
                 transcript = subtitle
@@ -307,13 +376,7 @@ async def _process_video(job_id: int, user_id: int, params: dict) -> None:
         user = await db.get(User, user_id)
         client = await _build_ai_client(db, user)
 
-        result = await asyncio.to_thread(
-            summarize_sync,
-            client,
-            transcript,
-            title,
-            lambda msg: set_progress(job_id, JobStage.SUMMARIZING, msg),
-        )
+        result = await _run_summary(job_id, client, transcript, title)
 
         video = await db.get(Video, video_id)
         video.summary = result["summary"]
@@ -480,6 +543,79 @@ async def _transcribe_via_asr(
 # 辅助
 # ═══════════════════════════════════════════
 
+async def _try_fetch_subtitle(
+    runner: YtDlpRunner, url: str, platform: str, job_id: int
+) -> str | None:
+    """
+    尝试取字幕。返回字幕文本；没有字幕返回 None（由调用方走 ASR）。
+
+    为什么要分这么细 —— 下载音频 + ASR 是整个流程里最贵的一步
+    （额度、时间、COS 流量），不该被一个可重试的网络抖动或一个
+    注定失败的场景拖下水：
+
+    - SubtitleUnavailable：确认没字幕 → 直接转 ASR，这是正常分支
+    - blocking 类错误（Cookie 失效 / 风控 / 视频已失效 / 地区限制）：
+      音频下载必然撞同一堵墙 → 立刻抛出，让用户看到可操作的原因，
+      而不是白等一场再收到同样的报错
+    - 其他错误（网络抖动等）：重试一次，仍失败才退到 ASR
+
+    全程 --skip-download，不会下载音视频。
+    """
+    if platform not in SUBTITLE_PLATFORMS:
+        logger.info("平台 %s 无字幕接口，直接走 ASR", platform)
+        return None
+
+    for attempt in (1, 2):
+        try:
+            return await asyncio.to_thread(runner.fetch_subtitle, url, platform)
+        except SubtitleUnavailable as exc:
+            logger.info("未找到字幕，转 ASR：%s", exc)
+            return None
+        except DownloadError as exc:
+            if is_blocking_reason(str(exc)):
+                logger.warning("字幕提取遇到无法恢复的错误，不再尝试 ASR：%s", exc)
+                raise
+
+            if attempt == 1:
+                logger.warning("字幕提取失败，%d 秒后重试：%s", SUBTITLE_RETRY_DELAY, exc)
+                set_progress(
+                    job_id, JobStage.FETCHING_SUBTITLE, "字幕提取失败，正在重试…"
+                )
+                await asyncio.sleep(SUBTITLE_RETRY_DELAY)
+                continue
+
+            logger.warning("字幕重试仍失败，转 ASR 兜底：%s", exc)
+            return None
+
+    return None
+
+
+async def _run_summary(
+    job_id: int,
+    client: DeepSeekClient,
+    text: str,
+    title: str,
+) -> dict:
+    """
+    执行一次 AI 总结（流式）。
+
+    - 进度文案走 set_progress（阶段进度条）
+    - 正文增量走 append_summary_chunk（前端实时显字）
+    返回 {"summary", "tokens", "mode"}，与旧的 summarize_sync 一致。
+    """
+    clear_summary(job_id)
+
+    def on_progress(msg: str) -> None:
+        set_progress(job_id, JobStage.SUMMARIZING, msg)
+
+    def on_chunk(chunk: str) -> None:
+        append_summary_chunk(job_id, chunk)
+
+    return await asyncio.to_thread(
+        summarize_stream_collect, client, text, title, on_progress, on_chunk
+    )
+
+
 async def _build_ai_client(db, user: User | None) -> DeepSeekClient:
     """
     AI 客户端优先级：
@@ -503,44 +639,6 @@ async def _build_ai_client(db, user: User | None) -> DeepSeekClient:
     return DeepSeekClient(global_key, api_url, model)
 
 
-def _to_netscape_cookie(content: str, domain: str = ".bilibili.com") -> str:
-    """
-    把浏览器里复制的 Cookie 字符串（`k=v; k=v`）转成 yt-dlp 要求的形式。
-
-    yt-dlp 的 --cookies 只认 Netscape cookie 文件（7 列、Tab 分隔），
-    直接塞 `name=value; name=value` 会被判定 "invalid length 1" 整行跳过，
-    等同于没带 Cookie。已经是 Netscape 格式的内容原样返回。
-    """
-    text = (content or "").strip()
-    if not text:
-        return ""
-
-    # yt-dlp / 浏览器插件导出的标准文件，本身已可用
-    if "\t" in text and ("# Netscape" in text or "HTTP Cookie File" in text):
-        return text if text.endswith("\n") else text + "\n"
-
-    lines = [
-        "# Netscape HTTP Cookie File",
-        "# 由 bilibili-summary-cloud 自动生成，请勿手工编辑",
-        "",
-    ]
-    for part in text.split(";"):
-        part = part.strip()
-        if not part or "=" not in part:
-            continue
-        name, _, value = part.partition("=")
-        name, value = name.strip(), value.strip()
-        if not name:
-            continue
-        # domain  include_subdomains  path  secure  expiry  name  value
-        # expiry=0 表示会话 Cookie，yt-dlp 接受
-        lines.append("\t".join([domain, "TRUE", "/", "TRUE", "0", name, value]))
-
-    if len(lines) <= 3:
-        return ""
-    return "\n".join(lines) + "\n"
-
-
 async def _resolve_cookie_file(db, user: User | None) -> str:
     """
     Cookie 优先级：用户自带 > 全局兜底。
@@ -558,7 +656,7 @@ async def _resolve_cookie_file(db, user: User | None) -> str:
     if not content.strip():
         content = await get_setting(db, "global_bili_cookie", "") or ""
 
-    netscape = _to_netscape_cookie(content)
+    netscape = to_netscape(content)
     if not netscape:
         return ""
 

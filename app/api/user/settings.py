@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession
 from app.api.schemas import Ok, UserSettingsReq
+from app.core.cookies import count_entries
 from app.core.logging import get_logger
 from app.core.security import decrypt_secret, encrypt_secret, mask_secret
 from app.db.models import Video
@@ -35,6 +36,9 @@ async def get_user_settings(user: CurrentUser, db: DbSession):
             "configured": bool(cookie),
             "masked": mask_secret(cookie, 8, 6),
             "length": len(cookie),
+            # 有效条目数：让用户一眼看出 Cookie 是不是解析出了东西
+            # （空值项会被丢弃，比如 `buvid_fp=` 这种）
+            "entries": count_entries(cookie),
         },
         "can_use_own_key": user.can_use_own_key,
         "allow_user_own_key": str(allow_own).lower() in ("1", "true", "yes", "on"),
@@ -60,8 +64,16 @@ async def update_user_settings(req: UserSettingsReq, user: CurrentUser, db: DbSe
         user.bili_cookie_enc = ""
         changed.append("B站 Cookie 已清除")
     elif req.bili_cookie and req.bili_cookie.strip():
-        user.bili_cookie_enc = encrypt_secret(req.bili_cookie.strip())
-        changed.append("B站 Cookie 已更新")
+        raw = req.bili_cookie.strip()
+        user.bili_cookie_enc = encrypt_secret(raw)
+
+        # 本地版同样会回报有效条数：Cookie 少了一半（比如漏复制 SESSDATA）
+        # 时用户当场就能发现，而不是等任务失败才来排查
+        entries = count_entries(raw)
+        if entries:
+            changed.append(f"B站 Cookie 已更新（{entries} 条有效）")
+        else:
+            changed.append("B站 Cookie 已保存，但未解析到有效条目，请确认复制完整")
 
     await db.flush()
     return Ok(message="、".join(changed) if changed else "未做任何修改")

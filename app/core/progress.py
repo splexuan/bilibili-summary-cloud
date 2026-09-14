@@ -95,6 +95,49 @@ def push_log(job_id: int, text: str) -> None:
     set_progress(job_id, "", message=text)
 
 
+# ═══════════════════════════════════════════
+# 流式总结正文缓冲
+# ═══════════════════════════════════════════
+#
+# 为什么不走 set_progress：进度值是「覆盖写」的单个 JSON，
+# 而总结正文需要不断追加；且正文可能上万字，塞进进度 JSON 会让
+# 每次进度更新都重传全文。这里单独用一个 Redis string 累积，
+# SSE 侧按长度增量下发。
+
+def _summary_key(job_id: int) -> str:
+    return f"bsum:summary:{job_id}"
+
+
+def append_summary_chunk(job_id: int, text: str) -> None:
+    """追加一段总结正文（Worker 每收到一个流片段调用一次）"""
+    if not text:
+        return
+    try:
+        r = get_redis()
+        key = _summary_key(job_id)
+        r.append(key, text)
+        r.expire(key, PROGRESS_TTL)
+    except Exception as exc:
+        # 实时显字失败不影响任务本身
+        logger.warning("总结正文推送失败 job=%s: %s", job_id, exc)
+
+
+def get_summary(job_id: int) -> str:
+    """读取当前已生成的总结正文（供 SSE 增量下发）"""
+    try:
+        return get_redis().get(_summary_key(job_id)) or ""
+    except Exception:
+        return ""
+
+
+def clear_summary(job_id: int) -> None:
+    """清空缓冲（任务开始前调用，避免上一轮的正文串场）"""
+    try:
+        get_redis().delete(_summary_key(job_id))
+    except Exception:
+        pass
+
+
 def mark_done(job_id: int, message: str = "完成") -> None:
     set_progress(job_id, JobStage.DONE, message, percent=100)
 

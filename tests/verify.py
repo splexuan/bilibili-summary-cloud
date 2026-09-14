@@ -147,9 +147,16 @@ chk('"sources"' in src3, "SSE 首帧携带 sources")
 chk('"delta"' in src3, "SSE 增量帧为 delta")
 chk('"end"' in src3, "SSE 结束帧为 end")
 
-# 任务结束帧
+# 任务结束帧：统一由 _terminal_events 产出（job_stream 调用它），
+# 必须回数据库取终态 —— Worker 是「先写 Redis、后写库」，
+# 只看 Redis 拿不到 video_id，前端会定位不到结果
 src4 = inspect.getsource(um.job_stream)
-chk('"video_id"' in src4, "任务结束帧携带 video_id（前端据此定位结果）")
+src4b = inspect.getsource(um._terminal_events)
+chk("_terminal_events" in src4, "job_stream 经 _terminal_events 下发终态")
+chk('"video_id"' in src4b and '"article_id"' in src4b,
+    "任务结束帧携带 video_id/article_id（前端据此定位结果）")
+chk('"error"' in src4b and '"end"' in src4b,
+    "失败发 error 事件、成功发 end 事件")
 
 print("\n=== 7. 页面模板中的 id 与 JS 引用一致性 ===")
 idx = (TPL / "index.html").read_text(encoding="utf-8")
