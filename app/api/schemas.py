@@ -88,6 +88,16 @@ class ChatSaveReq(BaseModel):
 
 
 # ═══════════════════════════════════════════
+# 朗读
+# ═══════════════════════════════════════════
+
+class TTSReq(BaseModel):
+    text: str = Field("", description="待朗读文本（Markdown 会被自动清理）")
+    voice: str = Field("", description="音色，留空用默认")
+    rate: str = Field("+0%", description="语速，如 +25%")
+
+
+# ═══════════════════════════════════════════
 # 管理端
 # ═══════════════════════════════════════════
 

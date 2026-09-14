@@ -48,6 +48,9 @@ rank-bm25>=0.2.2
 # ─── 工具 ───
 httpx>=0.27
 
+# ─── 朗读（Edge TTS，免费无需 Key）───
+edge-tts>=7.0
+
 # ─── 开发/测试专用（生产不需要，可忽略安装失败）───
 # aiosqlite：本地不开 Postgres 也能跑（SQLite 后端）
 # fakeredis：测试里替掉真实 Redis

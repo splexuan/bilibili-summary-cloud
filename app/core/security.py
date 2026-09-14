@@ -62,6 +62,26 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def verify_password_lenient(plain: str, hashed: str) -> bool:
+    """
+    先严格校验，失败后再试去掉首尾空白的结果。
+
+    为什么需要：浏览器密码管理器、手机输入法、从聊天窗口粘贴都可能带上
+    尾随空格或换行，用户会收到「用户名或密码错误」，但服务端完全正常 ——
+    实测多一个空格就必然 401，而这类问题极难自查（输入框里看不出空格）。
+
+    密码本身不做 trim（" 123" 与 "123" 仍是不同的密码），只在严格匹配
+    失败后作为兜底再试一次，因此不会削弱已验证用户的安全性。
+    """
+    if verify_password(plain, hashed):
+        return True
+
+    stripped = (plain or "").strip()
+    if not stripped or stripped == plain:
+        return False
+    return verify_password(stripped, hashed)
+
+
 def generate_password(length: int = 12) -> str:
     """生成随机密码（管理员建号时用）"""
     return secrets.token_urlsafe(length)[:length]

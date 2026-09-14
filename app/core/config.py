@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     max_tasks_per_user: int = 1
     worker_concurrency: int = 2
 
+    # ─── 限流（每分钟每 IP，按写操作计；0 表示不限制）───
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 60
+    # 登录/注册/TTS 等敏感接口的独立配额
+    strict_rate_limit_per_minute: int = 10
+
     # ─── COS ───
     cos_region: str = "ap-guangzhou"
     cos_secret_id: str = ""

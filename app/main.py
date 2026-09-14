@@ -168,6 +168,33 @@ if not settings.is_production:
 
 
 # ═══════════════════════════════════════════
+# 限流
+# ═══════════════════════════════════════════
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    按客户端 IP 限制写操作频率（POST/PUT/PATCH/DELETE）。
+
+    GET 一律放行：任务进度是 SSE 长连接 + 轮询，限流会把正常使用也拦掉。
+    """
+    from app.core.ratelimit import check_request
+
+    allowed, retry_after = check_request(request)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "code": "RATE_LIMITED",
+                "message": f"操作过于频繁，请 {retry_after} 秒后再试",
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    return await call_next(request)
+
+
+# ═══════════════════════════════════════════
 # 异常处理
 # ═══════════════════════════════════════════
 
@@ -197,11 +224,13 @@ from app.api.admin import data as admin_data  # noqa: E402
 from app.api.admin import settings as admin_settings  # noqa: E402
 from app.api.admin import users as admin_users  # noqa: E402
 from app.api.user import auth, chat, content, settings as user_settings  # noqa: E402
+from app.api.user import tts as user_tts  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(content.router)
 app.include_router(chat.router)
 app.include_router(user_settings.router)
+app.include_router(user_tts.router)
 
 app.include_router(admin_settings.router)
 app.include_router(admin_users.router)
@@ -257,24 +286,32 @@ async def public_config():
 # 静态页面
 # ═══════════════════════════════════════════
 
+_PAGE_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+def _page(name: str) -> FileResponse:
+    """页面 HTML 也要求回源校验：否则部署后浏览器可能仍用旧页面（含旧资源引用）"""
+    return FileResponse(settings.template_dir / name, headers=_PAGE_NO_CACHE)
+
+
 @app.get("/", include_in_schema=False)
 async def index():
-    return FileResponse(settings.template_dir / "index.html")
+    return _page("index.html")
 
 
 @app.get("/login", include_in_schema=False)
 async def login_page():
-    return FileResponse(settings.template_dir / "login.html")
+    return _page("login.html")
 
 
 @app.get("/knowledge", include_in_schema=False)
 async def knowledge_page():
-    return FileResponse(settings.template_dir / "knowledge.html")
+    return _page("knowledge.html")
 
 
 @app.get("/admin", include_in_schema=False)
 async def admin_page():
-    return FileResponse(settings.template_dir / "admin.html")
+    return _page("admin.html")
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -285,5 +322,20 @@ async def favicon():
     return RedirectResponse(url="/static/app.png")
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """
+    静态资源统一要求浏览器回源校验（带 ETag，未变更返回 304，开销可忽略）。
+
+    StaticFiles 默认不发 Cache-Control，浏览器会按启发式规则长期缓存，
+    改了 JS/CSS 之后用户可能一直拿到旧文件 —— 表现就是「代码修好了，
+    但页面上还是老样子」。前端资源没有文件名指纹，只能靠回源校验。
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers.setdefault("Cache-Control", "no-cache")
+        return resp
+
+
 settings.static_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=str(settings.static_dir)), name="static")

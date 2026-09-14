@@ -1,7 +1,7 @@
 """用户端认证 — 登录、注册（邀请制）、修改密码、会话信息"""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
@@ -9,10 +9,12 @@ from app.api.schemas import ChangePasswordReq, LoginReq, LoginResp, RegisterReq,
 from app.core.exceptions import AuthError, ConflictError, PermissionError_
 from app.core.logging import get_logger
 from app.core.progress import get_asr_usage
+from app.core.ratelimit import client_ip
 from app.core.security import (
     create_access_token,
     hash_password,
     verify_password,
+    verify_password_lenient,
 )
 from app.db.models import InviteCode, User
 from app.db.settings_repo import get_setting, is_enabled
@@ -38,12 +40,19 @@ def _user_dict(user: User, asr_used: int = 0, asr_quota: int = 0) -> dict:
 
 
 @router.post("/login", response_model=LoginResp)
-async def login(req: LoginReq, db: DbSession):
+async def login(req: LoginReq, request: Request, db: DbSession):
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(req.password, user.password_hash):
-        raise AuthError("用户名或密码错误")
+    if not user or not verify_password_lenient(req.password, user.password_hash):
+        # 失败必须留痕：此前登录失败没有任何日志，只能靠猜
+        # （不记录密码内容，只记长度与首尾空白，足以定位「多了空格」这类问题）
+        pwd = req.password or ""
+        logger.warning(
+            "登录失败: 用户名=%r 来源IP=%s 用户存在=%s 密码长度=%d 首尾含空白=%s",
+            req.username, client_ip(request), bool(user), len(pwd), pwd != pwd.strip(),
+        )
+        raise AuthError("用户名或密码错误（请确认密码首尾没有多余空格）")
     if not user.is_active:
         raise PermissionError_("账号已被禁用，请联系管理员")
 
@@ -118,7 +127,9 @@ async def me(user: CurrentUser, db: DbSession):
 
 @router.post("/password", response_model=Ok)
 async def change_password(req: ChangePasswordReq, user: CurrentUser, db: DbSession):
-    if not verify_password(req.old_password, user.password_hash):
+    # 同样走宽松校验：若登录时靠去空白才通过，改密码时也必须能通过，
+    # 否则用户会被卡在「能登录但不能改密码」的死角
+    if not verify_password_lenient(req.old_password, user.password_hash):
         raise AuthError("原密码错误")
 
     user.password_hash = hash_password(req.new_password)
