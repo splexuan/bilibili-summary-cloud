@@ -8,7 +8,9 @@
 """
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -25,7 +27,15 @@ from app.services.retrieval import (
     build_kb_index,
     rag_search,
 )
-from app.services.summarizer import DeepSeekClient, chat_stream
+from app.services.summarizer import (
+    KB_CHAT_SYSTEM_PROMPT,
+    KB_HISTORY_TRUNC,
+    DeepSeekClient,
+    build_content_system_prompt,
+    build_kb_user_prompt,
+    chat_stream,
+    rewrite_query,
+)
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["问答"])
@@ -34,6 +44,19 @@ router = APIRouter(prefix="/api/chat", tags=["问答"])
 KB_TOP_N = 5
 # 单次注入的上下文最大字符数（控制 token 消耗）
 MAX_CONTEXT_CHARS = 12000
+# 粗筛得分低于最高分该比例的内容视为不相关，直接排除（沿用本地版阈值）
+KB_SCORE_RATIO = 0.1
+# 知识库上下文多来源之间的分隔（沿用本地版）
+KB_CONTEXT_SEP = "\n\n=====\n\n"
+
+
+def _history_messages(messages: list[dict]) -> list[dict]:
+    """取当前提问之前的对话历史（当前问题由消息列表最后一条承载）"""
+    history = []
+    for m in messages[:-1]:
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip():
+            history.append({"role": m["role"], "content": m["content"]})
+    return history
 
 
 async def _get_client(db, user) -> DeepSeekClient:
@@ -69,18 +92,17 @@ async def chat_video(video_id: int, req: ChatReq, user: CurrentUser, db: DbSessi
     transcript = video.transcript or ""
     summary = video.summary or ""
 
-    # 精查：从原文中检索相关段落
-    context_parts = []
+    # 精查：从原文中检索相关段落。
+    # 无命中时不用空资料，交给 system 提示里的「## 转写开头」兜底。
+    context = ""
     if transcript and question:
         hits = await asyncio.to_thread(rag_search, video.vid, transcript, question, 5)
-        context_parts.extend(hits)
-    if summary:
-        context_parts.append(f"【内容总结】\n{summary}")
+        context = "\n\n---\n\n".join(hits)[:MAX_CONTEXT_CHARS]
 
-    context = "\n\n---\n\n".join(context_parts)[:MAX_CONTEXT_CHARS]
+    system = build_content_system_prompt(summary, context, transcript)
     client = await _get_client(db, user)
 
-    return _stream_response(client, req.messages, context, source="video")
+    return _stream_response(client, req.messages, system)
 
 
 # ═══════════════════════════════════════════
@@ -95,6 +117,7 @@ async def chat_kb(req: KBChatReq, user: CurrentUser, db: DbSession):
     流程：粗筛相关内容 → 对命中内容做原文精查 → 拼装上下文 → 回答
     """
     question = _last_user_message(req.messages)
+    history = _history_messages(req.messages)
 
     # ─── 收集该用户的全部内容 ───
     videos = (
@@ -110,9 +133,11 @@ async def chat_kb(req: KBChatReq, user: CurrentUser, db: DbSession):
     ).scalars().all()
 
     if not videos and not articles:
-        async def empty_gen():
-            yield "知识库中还没有任何内容，请先总结一些视频或文章。"
-        return StreamingResponse(empty_gen(), media_type="text/plain; charset=utf-8")
+        return _stream_text("知识库中还没有任何内容，请先总结一些视频或文章。")
+
+    # ─── 查询改写：短追问结合上下文改写成完整查询，否则检索命中率很低 ───
+    client = await _get_client(db, user)
+    search_query = await asyncio.to_thread(rewrite_query, client, question, history)
 
     # ─── 第一级：粗筛 ───
     items = []
@@ -132,24 +157,31 @@ async def chat_kb(req: KBChatReq, user: CurrentUser, db: DbSession):
         })
 
     index = build_kb_index(user.id, items)
-    ranked = index.rank(question, top_k=KB_TOP_N) if question else []
+    ranked = index.rank(search_query, top_k=KB_TOP_N) if search_query else []
 
-    # ─── 第二级：原文精查 ───
+    # ─── 第二级：原文精查（得分过低的内容视为不相关，排除）───
     context_parts = []
     sources = []
 
     vmap = {f"v:{v.id}": v for v in videos}
     amap = {f"a:{a.id}": a for a in articles}
+    max_score = ranked[0][1] if ranked else 0.0
 
     for key, score in ranked:
+        if max_score > 0 and score < max_score * KB_SCORE_RATIO:
+            continue
+
         if key.startswith("v:"):
             obj = vmap.get(key)
             if not obj:
                 continue
             hits = await asyncio.to_thread(
-                rag_search, obj.vid, obj.transcript or "", question, 3
+                rag_search, obj.vid, obj.transcript or "", search_query, 3
             )
-            body = "\n\n".join(hits) if hits else obj.summary
+            # 原文没命中 → 用总结兜底，避免「查得到内容却答不出来」
+            body = "\n\n".join(hits) if hits else (obj.summary or "")
+            if not body.strip():
+                continue
             context_parts.append(f"【视频：{obj.title}】\n{body}")
             sources.append({"type": "video", "id": obj.id, "title": obj.title})
         else:
@@ -157,23 +189,33 @@ async def chat_kb(req: KBChatReq, user: CurrentUser, db: DbSession):
             if not obj:
                 continue
             hits = await asyncio.to_thread(
-                rag_search, f"a{obj.id}", obj.text or "", question, 3
+                rag_search, f"a{obj.id}", obj.text or "", search_query, 3
             )
-            body = "\n\n".join(hits) if hits else obj.summary
+            body = "\n\n".join(hits) if hits else (obj.summary or "")
+            if not body.strip():
+                continue
             context_parts.append(f"【文章：{obj.title}】\n{body}")
             sources.append({"type": "article", "id": obj.id, "title": obj.title})
 
-    context = "\n\n---\n\n".join(context_parts)[:MAX_CONTEXT_CHARS]
-    client = await _get_client(db, user)
+    if not context_parts:
+        return _stream_text("没有找到相关内容。", sources=[])
 
-    return _stream_response(client, req.messages, context, source="kb", sources=sources)
+    context = KB_CONTEXT_SEP.join(context_parts)[:MAX_CONTEXT_CHARS]
+
+    # ─── 第三步：组装消息（system + 历史 + 带资料的用户消息）───
+    messages = []
+    for m in history:
+        messages.append({"role": m["role"], "content": m["content"][:KB_HISTORY_TRUNC]})
+    messages.append({"role": "user", "content": build_kb_user_prompt(context, question)})
+
+    return _stream_response(client, messages, KB_CHAT_SYSTEM_PROMPT, sources=sources)
 
 
 # ═══════════════════════════════════════════
 # 流式响应封装
 # ═══════════════════════════════════════════
 
-def _stream_response(client, messages: list[dict], context: str, source: str, sources: list | None = None):
+def _stream_response(client, messages: list[dict], system: str = "", sources: list | None = None):
     """SSE 流式返回，首帧携带来源信息"""
     clean_messages = [
         {"role": m.get("role", "user"), "content": m.get("content", "")}
@@ -185,11 +227,35 @@ def _stream_response(client, messages: list[dict], context: str, source: str, so
         if sources is not None:
             yield _sse("sources", {"sources": sources})
         try:
-            for chunk in chat_stream(client, clean_messages, context):
+            for chunk in chat_stream(client, clean_messages, system):
                 yield _sse("delta", {"text": chunk})
         except Exception as exc:
             logger.exception("问答失败")
             yield _sse("error", {"message": str(exc)})
+        yield _sse("end", {})
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _stream_text(text: str, sources: list | None = None):
+    """
+    以 SSE 形式回一句固定文案。
+
+    前端只认 sources/delta/error/end 事件，直接返回 text/plain 会渲染成空白，
+    所以这类「没有内容」的提示也必须走同一套协议。
+    """
+
+    async def gen():
+        if sources is not None:
+            yield _sse("sources", {"sources": sources})
+        yield _sse("delta", {"text": text})
         yield _sse("end", {})
 
     return StreamingResponse(
@@ -320,9 +386,7 @@ async def export_video(video_id: int, user: CurrentUser, db: DbSession):
     return Response(
         content=content.encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
-        },
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 
@@ -343,12 +407,28 @@ async def export_article(article_id: int, user: CurrentUser, db: DbSession):
     return Response(
         content=content.encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 
 def _safe_filename(name: str, max_len: int = 60) -> str:
-    import re
-
     cleaned = re.sub(r'[\\/:*?"<>|\r\n]+', "_", name or "untitled").strip()
     return cleaned[:max_len] or "untitled"
+
+
+def _content_disposition(filename: str) -> str:
+    """
+    生成 Content-Disposition 头。
+
+    ⚠️ filename* 的值必须按 RFC 5987 做 percent-encode。Starlette 用 latin-1
+    编码响应头，直接把中文写进去（`filename*=UTF-8''热搜….md`）会抛
+    UnicodeEncodeError 让接口 500 —— 表现为「下载 MD」总是失败（中文标题必现）。
+    同时给出纯 ASCII 的 filename 兜底，兼容不认 filename* 的老客户端。
+    """
+    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("_.")
+    if not ascii_fallback or not ascii_fallback.endswith(".md"):
+        ascii_fallback = "summary.md"
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )

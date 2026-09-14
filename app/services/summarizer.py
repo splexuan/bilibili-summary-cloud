@@ -22,6 +22,74 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # ═══════════════════════════════════════════
+# 输出预算
+# ═══════════════════════════════════════════
+
+# 推理模型（deepseek-v4-flash / deepseek-reasoner 等）会先消耗大量 token
+# 思考，正文预算会被挤掉。本地版的 word_limit * 4 是按**非推理模型**定的：
+# 实测同一份 2288 字转写，上限 4000 时 reasoning 就吃掉约 4000（finish=length），
+# 正文只剩 0~500 字，加粗/小标题等排版要求完全失效；
+# 预留 4096 余量后正文恢复到 1100+ 字，格式也正常。
+#
+# 对非推理模型不会增加开销：max_tokens 只是上限，它们会提前 finish=stop。
+REASONING_TOKEN_ALLOWANCE = 4096
+
+
+def summary_max_tokens(base: int) -> int:
+    """在正文预算之外，为推理模型额外留出思考余量"""
+    return base + REASONING_TOKEN_ALLOWANCE
+
+
+# ═══════════════════════════════════════════
+# 输出校正
+# ═══════════════════════════════════════════
+
+_HEADING_LINE_RE = re.compile(r"^(#{2,4})[ \t]+(.+)$")
+_HEADING_MAX_LEN = 30      # 超过这个长度的「## 行」几乎肯定粘了正文
+_HEADING_COLON_LIMIT = 20  # 在这之前找冒号作为标题终点
+
+
+def normalize_markdown_headings(
+    text: str, max_len: int = _HEADING_MAX_LEN, colon_limit: int = _HEADING_COLON_LIMIT
+) -> str:
+    """
+    修正「## 标题」与正文粘在同一行的情况。
+
+    实测流式调用下模型偶尔会把小标题和正文写在一行
+    （非流式没遇到），marked 会把整行渲染成二级标题，
+    正文变成一大坨加粗大字，非常难看。
+
+    有冒号时按冒号切开（模型的小标题习惯带「：」）；
+    没有可用分隔符时降级成加粗段落 —— 宁可少一个标题，
+    也不要让一整段正文糊成标题。
+    """
+    if not text:
+        return text
+
+    lines = []
+    for line in text.split("\n"):
+        m = _HEADING_LINE_RE.match(line)
+        if not m:
+            lines.append(line)
+            continue
+
+        body = m.group(2).strip()
+        if len(body) <= max_len:
+            lines.append(line)
+            continue
+
+        head = body[:colon_limit]
+        idx = max(head.rfind("："), head.rfind(":"))
+        if idx > 0:
+            lines.append(f"{m.group(1)} {body[: idx + 1]}")
+            lines.append(body[idx + 1:].strip())
+        else:
+            lines.append(f"**{body}**")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════
 # 提示词（沿用本地版，勿随意改动）
 # ═══════════════════════════════════════════
 
@@ -29,10 +97,22 @@ SUMMARY_PROMPT = """{title_line}请根据以下语音转写，生成一份结构
 
 输出时从第一句概括性描述直接开始，严禁任何开场白。
 
+内容取舍：
+- 广告、赞助、恰饭、带货推广（口播广告、优惠券/口令、App 下载引导、商品链接引导等）不纳入总结
+- 不要为广告单开章节，也不要提及广告主、商品名或促销信息
+- 被广告打断的正文内容要照常保留，只剔除广告本身
+- 只剔除明确的广告推广，不要把正常的观点、案例、举例误判成广告
+
 结构要求：
 - 开头：一两句话概括核心内容
 - 主体：分点列出主要观点（数量不限，不遗漏重要信息）
 - 结尾：摘录 1-3 句有价值的原话
+
+排版要求（Markdown，前端按 Markdown 渲染，务必遵守）：
+- 每个分点的标题必须独占一行：先写 "## 标题"，换行后再写正文
+- 标题行内不要接正文内容，标题与正文之间必须换行
+- 关键结论、关键数字、专有名词用 **双星号加粗**，每段控制在 2-3 处
+- 不要输出代码块、表格和分隔线
 
 禁止事项：
 - 禁止输出"好的"、"以下是"、"根据您提供的"、"下面我来"等开场白
@@ -47,6 +127,12 @@ SUMMARY_PROMPT = """{title_line}请根据以下语音转写，生成一份结构
 CHUNK_SUMMARY_PROMPT = """{title_line}下面是一段长视频转写的片段，请提取其中所有有价值的信息，不要遗漏。
 
 输出时从"本段概要"直接开始，严禁任何开场白。
+
+内容取舍：
+- 广告、赞助、恰饭、带货推广（口播广告、优惠券/口令、App 下载引导、商品链接引导等）不纳入总结
+- 不要为广告单开章节，也不要提及广告主、商品名或促销信息
+- 被广告打断的正文内容要照常保留，只剔除广告本身
+- 只剔除明确的广告推广，不要把正常的观点、案例、举例误判成广告
 
 输出格式：
 - 本段概要：2-3 句说明本段讲了什么
@@ -69,10 +155,21 @@ FINAL_SUMMARY_PROMPT = """{title_line}请将以下多段总结整合为一份完
 
 输出时从核心内容概括直接开始，严禁任何开场白。
 
+内容取舍：
+- 广告、赞助、恰饭、带货推广（口播广告、优惠券/口令、App 下载引导、商品链接引导等）不纳入总结
+- 不要为广告单开章节，也不要提及广告主、商品名或促销信息
+- 被广告打断的正文内容要照常保留，只剔除广告本身
+- 只剔除明确的广告推广，不要把正常的观点、案例、举例误判成广告
+
 结构：
 - 核心内容：3-5 句话概括全片
 - 主要内容：按主题汇总所有重点，合并重复，不丢细节
 - 观点摘录：保留有价值的原话
+
+排版要求（Markdown，前端按 Markdown 渲染，务必遵守）：
+- 每个主题的标题单独成行，用 "## " 开头，例如 "## 一、事件始末"
+- 关键结论、关键数字、专有名词用 **双星号加粗**，每段控制在 2-3 处
+- 不要输出代码块、表格和分隔线
 
 禁止事项：
 - 禁止输出"好的"、"以下是"、"根据以上分段总结"、"整合如下"等开场白
@@ -90,18 +187,35 @@ _PREAMBLE_PATTERNS = [
     r'^好的[，,]\s*这是根据[您你]提供的[^，,\n]*[，,]\s*',
     r'^好的[，,]\s*以下是[^，,\n]*[：:]\s*',
     r'^好的[，,]\s*下面我来[^，,\n]*[：:]\s*',
-    r'^以下是[^，,\n]*的[总结|结构化总结][：:]\s*',
-    r'^下面[是给为]您?[^，,\n]*[总结|整理][的]*[：:]\s*',
+    # ⚠️ 这两条本地版写成了 [总结|结构化总结] / [总结|整理]，
+    # 那是**字符集**不是分组，等价于「匹配 总/结/|/整/理 中的任意一个字」，
+    # 于是「以下是对该视频的总结：」这类最常见的开场白永远剥不掉。
+    # 这里改成 (?:…) 才符合原意；其余 6 条与本地版逐字一致。
+    r'^以下是[^，,\n]*的(?:总结|结构化总结)[：:]\s*',
+    r'^下面[是给为]您?[^，,\n]*(?:总结|整理)[的]*[：:]\s*',
     r'^根据[您你]提供的[^，,\n]*[，,]?\s*',
     r'^这是根据[^，,\n]*生成[的]*[：:]\s*',
     r'^我已[经]?[为您你]*[^，,\n]*[，,]\s*',
 ]
 
 
-def strip_preamble(text: str) -> str:
+def strip_preamble_leading(text: str) -> str:
+    """
+    只去掉开头的开场白，**保留结尾原样**。
+
+    流式输出时必须用这个而不是 strip_preamble()：缓冲区是在流的中间被
+    刷出去的，rstrip 会把缓冲区末尾的换行一起吃掉，下一个片段接上来就被
+    粘成一行。实测症状是「第一个小标题和正文挤在同一行」——
+    因为只有第一次刷新会踩到这个边界，之后的片段都是原样透传。
+    """
     for pattern in _PREAMBLE_PATTERNS:
         text = re.sub(pattern, "", text, count=1, flags=re.IGNORECASE)
-    return text.strip()
+    return text.lstrip()
+
+
+def strip_preamble(text: str) -> str:
+    """完整文本用：去掉开场白并清理首尾空白"""
+    return strip_preamble_leading(text).rstrip()
 
 
 def _build_title_line(title: str) -> str:
@@ -233,8 +347,14 @@ class DeepSeekClient:
         temperature: float = 0.4,
         max_tokens: int = 4000,
         timeout: int = 300,
+        usage_sink: dict | None = None,
     ):
-        """逐块 yield 文本"""
+        """
+        逐块 yield 文本。
+
+        usage_sink：传入可变 dict（如 {}），流结束时会被填入服务端返回的 usage，
+        用于流式调用也能统计 token 用量（OpenAI 兼容的 include_usage）。
+        """
         payload = {
             "model": self.model,
             "messages": messages,
@@ -242,6 +362,8 @@ class DeepSeekClient:
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if usage_sink is not None:
+            payload["stream_options"] = {"include_usage": True}
 
         try:
             resp = requests.post(
@@ -267,12 +389,28 @@ class DeepSeekClient:
                 break
             try:
                 chunk = json.loads(data_str)
-                delta = chunk["choices"][0].get("delta", {})
-                content = delta.get("content", "")
-                if content:
-                    yield content
-            except (json.JSONDecodeError, KeyError, IndexError):
+            except json.JSONDecodeError:
                 continue
+
+            # include_usage 时最后一个 chunk 只有 usage、没有 choices
+            usage = chunk.get("usage")
+            if usage and usage_sink is not None:
+                usage_sink.clear()
+                usage_sink.update(usage)
+
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+
+            # 推理模型把预算耗尽时正文会被截断甚至为空，这里留一条线索
+            if choices[0].get("finish_reason") == "length":
+                logger.warning(
+                    "AI 输出被 max_tokens=%s 截断（推理模型会先吃掉大量预算）", max_tokens
+                )
+
+            content = (choices[0].get("delta") or {}).get("content", "")
+            if content:
+                yield content
 
 
 # ═══════════════════════════════════════════
@@ -312,10 +450,10 @@ def summarize_sync(
     )
 
     raw, tokens = client.complete(
-        prompt, temperature=0.4, max_tokens=word_limit * 4
+        prompt, temperature=0.4, max_tokens=summary_max_tokens(word_limit * 4)
     )
     return {
-        "summary": strip_preamble(raw),
+        "summary": normalize_markdown_headings(strip_preamble(raw)),
         "tokens": tokens,
         "mode": "direct",
     }
@@ -326,10 +464,14 @@ def summarize_stream(
     text: str,
     title: str = "",
     on_progress=None,
+    usage_sink: dict | None = None,
 ):
     """
     流式总结。短文本直接流式输出；长文本走 Map-Reduce，
-    先 yield 进度提示（以 \x00 开头），最后 yield 正文。
+    先通过 on_progress 汇报进度，最后 yield 正文。
+
+    本地版就有的能力，云端版此前只移植了函数、没人调用（Worker 走同步版），
+    结果用户只能看到「AI 总结中」干等到结束。现在由 Worker 消费它做实时显字。
     """
     if not text or not text.strip():
         raise AIError("转写内容为空，无法总结")
@@ -338,6 +480,9 @@ def summarize_stream(
 
     if length > settings.map_reduce_threshold:
         result = _map_reduce(client, text, title, on_progress)
+        if usage_sink is not None:
+            usage_sink.clear()
+            usage_sink["total_tokens"] = result.get("tokens", 0)
         yield result["summary"]
         return
 
@@ -350,8 +495,54 @@ def summarize_stream(
     messages = [{"role": "user", "content": prompt}]
 
     yield from _strip_preamble_stream(
-        client.stream(messages, temperature=0.4, max_tokens=word_limit * 4)
+        client.stream(
+            messages,
+            temperature=0.4,
+            max_tokens=summary_max_tokens(word_limit * 4),
+            usage_sink=usage_sink,
+        )
     )
+
+
+def summarize_stream_collect(
+    client: DeepSeekClient,
+    text: str,
+    title: str = "",
+    on_progress=None,
+    on_chunk=None,
+) -> dict:
+    """
+    流式总结 + 收集结果，供 Worker 使用。
+
+    on_chunk(chunk)：每产出一段就回调（用于推送到前端实时显字）。
+    返回 {"summary", "tokens", "mode"} —— 与 summarize_sync 保持一致，
+    这样调用方切换实现时无需改动其余逻辑。
+    """
+    usage: dict = {}
+    parts: list[str] = []
+
+    for chunk in summarize_stream(
+        client, text, title, on_progress, usage_sink=usage
+    ):
+        if not chunk:
+            continue
+        parts.append(chunk)
+        if on_chunk:
+            on_chunk(chunk)
+
+    summary = normalize_markdown_headings("".join(parts))
+    if not summary.strip():
+        # 最常见的原因是推理模型把全部预算花在思考上（无正文输出）
+        raise AIError(
+            "AI 没有返回正文内容。若是推理模型（如 deepseek-v4-flash），"
+            "通常是思考占满了 max_tokens，请调大预算或更换模型后重试"
+        )
+
+    mode = "map_reduce" if len(text) > settings.map_reduce_threshold else "direct"
+    # direct 模式的 token 来自 include_usage；map_reduce 由 _map_reduce 累加后写入 sink
+    tokens = int(usage.get("total_tokens") or 0)
+
+    return {"summary": summary, "tokens": tokens, "mode": mode}
 
 
 def _strip_preamble_stream(chunks):
@@ -366,7 +557,9 @@ def _strip_preamble_stream(chunks):
 
         buf += chunk
         if len(buf) > 120 or (chunk and chunk in ("\n", "。", "！", "？", "：", ":")):
-            cleaned = strip_preamble(buf)
+            # 用 *leading* 版本：缓冲区结尾可能正好停在小标题后面，
+            # 这里一旦 rstrip 就会把后面的正文粘到标题行上
+            cleaned = strip_preamble_leading(buf)
             yield cleaned if (cleaned != buf and cleaned) else buf
             yielded = True
 
@@ -400,7 +593,7 @@ def _map_reduce(
                 ),
                 system="你是一个专业的视频内容分析助手。",
                 temperature=0.3,
-                max_tokens=1500,
+                max_tokens=summary_max_tokens(1500),
             )
             total_tokens += tk
             chunk_summaries.append(f"## 片段 {i + 1}\n{strip_preamble(piece)}")
@@ -427,7 +620,7 @@ def _map_reduce(
                         text=group, word_limit=wl, title_line=_build_title_line(title)
                     ),
                     temperature=0.4,
-                    max_tokens=wl * 4,
+                    max_tokens=summary_max_tokens(wl * 4),
                 )
                 total_tokens += tk
                 batched.append(strip_preamble(piece))
@@ -447,12 +640,12 @@ def _map_reduce(
             text=combined, word_limit=word_limit, title_line=_build_title_line(title)
         ),
         temperature=0.4,
-        max_tokens=word_limit * 4,
+        max_tokens=summary_max_tokens(word_limit * 4),
     )
     total_tokens += tk
 
     return {
-        "summary": strip_preamble(final),
+        "summary": normalize_markdown_headings(strip_preamble(final)),
         "tokens": total_tokens,
         "mode": "map_reduce",
         "chunks": total,
@@ -460,38 +653,114 @@ def _map_reduce(
 
 
 # ═══════════════════════════════════════════
-# 对话
+# 对话（提示词逐字沿用本地版，勿随意改动）
 # ═══════════════════════════════════════════
 
-CHAT_SYSTEM_PROMPT = """你是一个内容问答助手。基于提供的资料回答用户问题。
+# 单内容问答：人设 + 资料注入结构（## AI 总结 / ## 相关原文段落 / 转写开头兜底）
+CONTENT_CHAT_SYSTEM_PROMPT = (
+    "你是一个视频内容讨论助手。请基于以下信息回答用户问题，尽量引用原文内容。"
+    "如果信息不足以回答，诚实说明。\n\n"
+)
 
-规则：
-1. 只依据资料内容回答，资料中没有的信息不要编造
-2. 如果资料不足以回答，明确说明"资料中没有相关内容"
-3. 回答简洁准确，可用分点
-4. 不要输出"根据您提供的资料"这类开场白，直接回答"""
+# 跨内容知识库问答：输出格式要求（加粗标题分点 / 标注来源 / 留空行）
+KB_CHAT_SYSTEM_PROMPT = (
+    "你是一个知识库助手。回复要求：1) 用加粗标题分点，每点简明扼要 "
+    "2) 关键结论用**加粗**突出 3) 每个观点标注来源 4) 段落间留空行 "
+    "5) 不要客套话，直接给答案。"
+)
+
+KB_CHAT_USER_PROMPT = """以下是多个视频/文章的相关原文。请尽量综合所有来源回答，每个来源都标注。如有冲突观点也要说明。直接回答，标注来源。
+
+## 相关原文
+{context}
+
+## 用户问题
+{question}
+
+请回答："""
+
+# 多轮追问的查询改写（短追问直接检索命中率低，先改写成完整查询）
+QUERY_REWRITE_SYSTEM_PROMPT = "你是查询改写器，只输出改写后的查询语句，不要解释。"
+
+QUERY_REWRITE_PROMPT = """根据对话上下文，把用户的追问改写成一个完整、清晰的搜索查询语句（30字以内）。
+
+{history}用户追问: {question}
+改写后的查询:"""
+
+# 触发查询改写的追问字数上限（本地版阈值）
+REWRITE_MAX_QUESTION_LEN = 15
+# 注入的对话历史条数（本地版取末尾 4 条，每条截断 300 字）
+REWRITE_HISTORY_TURNS = 4
+REWRITE_HISTORY_TRUNC = 300
+# 知识库历史消息的截断长度（本地版）
+KB_HISTORY_TRUNC = 2000
+# 单内容无 RAG 命中时，用转写开头兜底的字符数（本地版）
+TRANSCRIPT_FALLBACK_CHARS = 3000
 
 
-def chat_stream(client: DeepSeekClient, messages: list[dict], context: str = ""):
-    """流式问答。context 为检索到的资料，注入到 system 中。"""
-    system = CHAT_SYSTEM_PROMPT
+def build_content_system_prompt(summary: str, context: str, transcript: str) -> str:
+    """
+    单内容问答的 system 提示（结构逐字沿用本地版）。
+
+    有 RAG 命中 → 注入「## 相关原文段落」；无命中 → 用「## 转写开头」兜底，
+    避免资料为空时模型只能凭空回答。
+    """
+    prompt = CONTENT_CHAT_SYSTEM_PROMPT
+    if summary:
+        prompt += f"## AI 总结\n{summary}\n\n"
     if context:
-        system += f"\n\n【参考资料】\n{context}\n【资料结束】"
+        prompt += f"## 相关原文段落\n{context}\n"
+    elif transcript:
+        prompt += f"## 转写开头\n{transcript[:TRANSCRIPT_FALLBACK_CHARS]}\n"
+    return prompt
 
-    full = [{"role": "system", "content": system}] + messages
+
+def build_kb_user_prompt(context: str, question: str) -> str:
+    return KB_CHAT_USER_PROMPT.format(context=context, question=question)
+
+
+def rewrite_query(client: DeepSeekClient, question: str, history: list[dict]) -> str:
+    """
+    把短追问改写成完整查询；不满足条件或失败时返回原问题。
+    失败只降级、不阻断问答。
+    """
+    if not history or len(question) > REWRITE_MAX_QUESTION_LEN:
+        return question
+
+    lines = ""
+    for msg in history[-REWRITE_HISTORY_TURNS:]:
+        if not isinstance(msg, dict) or msg.get("role") not in ("user", "assistant"):
+            continue
+        content = msg.get("content", "")
+        if content:
+            lines += f"{'用户' if msg['role'] == 'user' else 'AI'}: {content[:REWRITE_HISTORY_TRUNC]}\n"
+
+    if not lines:
+        return question
+
+    prompt = QUERY_REWRITE_PROMPT.format(history=lines, question=question)
+    try:
+        rewritten, _ = client.complete(
+            prompt, system=QUERY_REWRITE_SYSTEM_PROMPT, temperature=0.8, max_tokens=2000
+        )
+        rewritten = rewritten.strip()
+        if rewritten and len(rewritten) > 2:
+            logger.info("查询重写: '%s' → '%s'", question, rewritten)
+            return rewritten
+    except AIError as exc:
+        logger.warning("查询重写失败，用原问题检索: %s", exc)
+    return question
+
+
+def chat_stream(client: DeepSeekClient, messages: list[dict], system: str = ""):
+    """流式问答。system 由调用方按场景拼装（单内容 / 知识库）。"""
+    full = ([{"role": "system", "content": system}] if system else []) + messages
     yield from client.stream(full, temperature=0.8, max_tokens=2000)
 
 
-def chat_sync(client: DeepSeekClient, messages: list[dict], context: str = "") -> dict:
-    system = CHAT_SYSTEM_PROMPT
-    if context:
-        system += f"\n\n【参考资料】\n{context}\n【资料结束】"
-
-    full = [{"role": "system", "content": system}] + messages
-    payload_messages = full
-
-    # 复用 complete 的请求逻辑
-    text, tokens = _complete_messages(client, payload_messages, temperature=0.8, max_tokens=2000)
+def chat_sync(client: DeepSeekClient, messages: list[dict], system: str = "") -> dict:
+    full = ([{"role": "system", "content": system}] if system else []) + messages
+    text, tokens = _complete_messages(client, full, temperature=0.8, max_tokens=2000)
     return {"reply": text, "tokens": tokens}
 
 
