@@ -176,11 +176,48 @@ a:hover { text-decoration: underline; }
   opacity: .85;
 }
 
-.sidebar-foot {
-  padding: 12px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
+/*
+ * 顶栏右侧：原来「知识库 / 后台 / 退出 + 用户名」压在侧边栏底部，
+ * 鼠标要从右上角的操作区横跨整个屏幕才够得着，挪到顶栏后与
+ * knowledge.html 既有的 topbar-right 写法保持一致。
+ */
+.topbar-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.topbar-links a {
+  font-size: 12.5px;
   color: var(--ink-500);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color .15s;
+}
+.topbar-links a:hover { color: var(--amber-600); }
+
+/* 用户名：左侧加一道分隔线，把「导航」和「身份」分成两组 */
+.topbar-user {
+  font-size: 12.5px;
+  color: var(--ink-500);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
+}
+
+/*
+ * 窄屏：顶栏右侧这一组（导航 + 用户名 + 主题）在小屏上放不下。
+ * 实测 360px 下 admin 会溢出 189px、整个页面出现横向滚动，
+ * 而导航链接是这组的重点，所以去掉用户名（自己登的账号，小屏上没必要常驻）
+ * 并收紧内边距与间距。
+ */
+@media (max-width: 600px) {
+  .topbar { padding: 0 14px; }
+  .topbar-right { gap: 12px; }
+  .topbar-links { gap: 12px; }
+  .topbar-user { display: none; }
 }
 
 .main {
@@ -188,6 +225,17 @@ a:hover { text-decoration: underline; }
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+/*
+ * 窄屏：侧边栏改为整行置顶。
+ * .sidebar 是固定 220px + sticky + 100vh，窄屏上会把主区挤到只剩一点点
+ * （430px 屏下主区仅 210px 宽，顶栏会直接溢出）。这条规则原来只写在
+ * index.html 里，admin.html 漏了 —— 后台在手机上整页横向滚动。
+ */
+@media (max-width: 1000px) {
+  .app { flex-direction: column; }
+  .sidebar { position: static; height: auto; width: 100%; }
 }
 
 .topbar {

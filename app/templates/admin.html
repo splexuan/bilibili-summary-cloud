@@ -403,16 +403,6 @@
       </div>
     </nav>
 
-    <div class="sidebar-foot">
-      <div class="row-between">
-        <span id="whoami" class="truncate">—</span>
-        <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
-      </div>
-      <div class="row mt-1" style="gap:12px">
-        <a href="/" class="text-xs">去前台</a>
-        <a href="#" class="text-xs" onclick="logout();return false">退出</a>
-      </div>
-    </div>
   </aside>
 
   <!-- ═══ 主区 ═══ -->
@@ -420,7 +410,12 @@
     <header class="topbar">
       <h2 id="page-title">概览</h2>
       <div class="topbar-right">
-        <button class="btn btn-sm" onclick="refreshCurrent()">刷新</button>
+        <nav class="topbar-links">
+          <a href="/">去前台</a>
+          <a href="#" onclick="logout();return false">退出</a>
+        </nav>
+        <span id="whoami" class="topbar-user">—</span>
+        <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
       </div>
     </header>
 
@@ -456,8 +451,6 @@ function go(page) {
   history.replaceState(null, '', '#' + page);
   render();
 }
-
-function refreshCurrent() { render(); }
 
 async function render() {
   const c = document.getElementById('content');

@@ -299,10 +299,8 @@
     margin-left: 26px;
   }
 
+  /* 侧边栏整行置顶的规则已挪到 common.css（后台也缺，见那里的注释） */
   @media (max-width: 1000px) {
-    .sidebar { position: static; height: auto; width: 100%; }
-    .app { flex-direction: column; }
-
     /* 窄屏（手机）恢复自然高度：小屏上"内部再套一条滚动条"极难操作，
        让整页自然滚动更顺手 */
     .scroll-panel { height: auto; min-height: 0; }
@@ -345,23 +343,21 @@
       </div>
     </nav>
 
-    <div class="sidebar-foot">
-      <div class="row-between">
-        <span id="whoami" class="truncate">—</span>
-        <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
-      </div>
-      <div class="row mt-1" style="gap:12px">
-        <a href="/knowledge" class="text-xs">知识库</a>
-        <a href="/admin" class="text-xs hidden" id="link-admin">后台</a>
-        <a href="#" class="text-xs" onclick="logout();return false">退出</a>
-      </div>
-    </div>
   </aside>
 
   <!-- ═══ 主区 ═══ -->
   <main class="main">
     <header class="topbar">
       <h2 id="page-title">总结工作台</h2>
+      <div class="topbar-right">
+        <nav class="topbar-links">
+          <a href="/knowledge">知识库</a>
+          <a href="/admin" class="hidden" id="link-admin">后台</a>
+          <a href="#" onclick="logout();return false">退出</a>
+        </nav>
+        <span id="whoami" class="topbar-user">—</span>
+        <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
+      </div>
     </header>
 
     <div class="content">

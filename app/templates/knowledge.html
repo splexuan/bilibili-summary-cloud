@@ -161,7 +161,6 @@
     <header class="topbar">
       <h2>知识库问答</h2>
       <div class="topbar-right">
-        <button class="btn btn-sm" id="btn-refresh" onclick="refreshLists()">刷新</button>
         <a href="/" class="btn btn-sm">回工作台</a>
         <button class="btn btn-ghost btn-sm" data-theme-icon onclick="Theme.toggle()">☾</button>
       </div>
@@ -250,13 +249,26 @@ function refreshLists() {
 
 /* ═══ 标签切换 ═══ */
 
-function switchTab(tab) {
+/* 标签 → 对应的列表加载函数。三个 load* 都是整体重渲染，重复调用安全 */
+const TAB_LOADERS = { videos: loadVideos, articles: loadArticles, chats: loadChats };
+
+/*
+ * reload 默认为 true：切过来时重新拉取该标签的列表。
+ * 顶栏的「刷新」按钮已移除，而列表原本只有打开页面时加载一次，
+ * 不重拉的话切标签看到的可能是旧数据（得按 F5 才能更新）。
+ * askAbout() 会调 switchTab('videos') 把界面切到对话区，那不是「去逛视频列表」，
+ * 所以那里显式传 false，免得每次都白发一次列表请求。
+ */
+function switchTab(tab, reload = true) {
   document.querySelectorAll('.kb-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.tab === tab);
   });
   document.querySelectorAll('.kb-panel').forEach(p => {
     p.classList.toggle('active', p.id === 'panel-' + tab);
   });
+
+  const load = TAB_LOADERS[tab];
+  if (reload && load) load();
 }
 
 /* ═══ 视频库 ═══ */
@@ -524,7 +536,7 @@ function renderSources(sources) {
 
 function askAbout(kind, id, title) {
   SESS = { id: null, messages: [], busy: false };
-  switchTab('videos');
+  switchTab('videos', false);   // 只为显示对话区，不需要重拉视频列表
   ask(`请介绍一下《${title}》的核心内容。`);
 }
 

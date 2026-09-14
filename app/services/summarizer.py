@@ -1,10 +1,16 @@
 """
-AI 总结服务 — DeepSeek 调用 + Map-Reduce 分段总结。
+AI 总结服务 — DeepSeek 调用 + （必要时）Map-Reduce 分段总结。
+
+路径选择不再看固定的字数阈值，而是看「一次放下需要多少输出预算」：
+推理模型的思考量随输入线性增长，输入过长时预算会顶到接口上限，这时才分段。
+    - 放得下 → 单次直连（质量更高：模型看得到全文）
+    - 放不下 → 两/三级 Map-Reduce（分段提炼 → 汇总）
+
+原来用的是固定阈值（<12000 直接 / 12000-20000 两级 / >20000 三级），
+但实测那条 13803 字的视频（38 分钟）走分段后只产出 20% 的篇幅，
+原因见 _guard_chunk_output 的说明。
 
 业务参数沿用本地版调优结果，见 app/core/config.py：
-    <12000 字      直接总结
-    12000-20000   两级 Map-Reduce
-    >20000        三级（分组汇总后再汇总）
     chunk_size=6500, overlap=600
     温度：分段 0.3 / 汇总 0.4
     输出比例 35%，下限 1000 字，上限 8000 字
@@ -34,10 +40,41 @@ logger = get_logger(__name__)
 # 对非推理模型不会增加开销：max_tokens 只是上限，它们会提前 finish=stop。
 REASONING_TOKEN_ALLOWANCE = 4096
 
+# 中文约 2.1 字符 / token —— 对线上模型实测（1,000,000 字符 = 476,220 tokens）
+CHARS_PER_TOKEN = 2.1
 
-def summary_max_tokens(base: int) -> int:
-    """在正文预算之外，为推理模型额外留出思考余量"""
-    return base + REASONING_TOKEN_ALLOWANCE
+# 推理模型的「思考」量随输入增长，不能只留固定余量。
+# 实测：6500 字符的分段要 5,471 个思考 token，约 1.76 × 输入 token 数。
+# 这里按 4 倍留余量 —— 交叉验证：6500 字符的输入在预算 8192 时正文为 0
+# （全被思考吃掉、finish=length），提到 16384 才正常收尾；
+# 本公式对该输入给出 1500 + 6500/2.1*4 ≈ 13881，再算上正文预算即超过 16384。
+REASONING_TOKEN_RATIO = 4.0
+
+# 实测可用的单次输出上限（max_tokens=65536 能正常收尾）。超过会被接口拒绝，
+# 所以预算必须据此封顶，而不是无限加大。
+MAX_TOKENS_CEILING = 65536
+
+# 一段产出低于这个字数就视为「没有有效产出」。之所以不设为 0：
+# 有些模型会返回一句「好的，以下是总结」之类的开场白但正文为空，
+# strip_preamble 不一定剥得干净；正常情况下哪怕 1000 字的分段也能写出几百字。
+MIN_CHUNK_OUTPUT = 80
+
+
+def _reasoning_allowance(input_chars: int) -> int:
+    """按输入长度估算推理模型需要的思考余量"""
+    if input_chars <= 0:
+        return REASONING_TOKEN_ALLOWANCE
+    est = int(input_chars / CHARS_PER_TOKEN * REASONING_TOKEN_RATIO)
+    return max(REASONING_TOKEN_ALLOWANCE, est)
+
+
+def summary_max_tokens(base: int, input_chars: int = 0) -> int:
+    """
+    正文预算 base + 随输入增长的思考余量，并封顶在接口上限内。
+
+    input_chars 不传时退化为旧行为（只加固定余量），便于渐进迁移。
+    """
+    return min(base + _reasoning_allowance(input_chars), MAX_TOKENS_CEILING)
 
 
 # ═══════════════════════════════════════════
@@ -228,6 +265,20 @@ def calc_word_limit(text_length: int) -> int:
     """按 35% 比例计算，下限 1000，上限 8000"""
     raw = int(text_length * settings.summary_ratio)
     return max(settings.summary_min_words, min(raw, settings.summary_max_words))
+
+
+def single_shot_fits(text_len: int) -> bool:
+    """
+    这段文本能否一次喂完。
+
+    单次调用质量更高 —— 模型能看到全文、不会像分段那样先各自压缩再汇总，
+    所以只要能放下就不分段。判断依据是所需 max_tokens 是否落在接口上限内：
+    推理模型的思考量随输入增长，输入太长时预算必然不够，这时才退到分段。
+
+    以线上实测值估算：约 25000 字符（≈1 小时视频）以内都能单次处理。
+    """
+    base = calc_word_limit(text_len) * 4
+    return base + _reasoning_allowance(text_len) <= MAX_TOKENS_CEILING
 
 
 def chunk_text(text: str, chunk_size: int | None = None) -> list[str]:
@@ -434,11 +485,10 @@ def summarize_sync(
 
     length = len(text)
 
-    # 长文本 → Map-Reduce
-    if length > settings.map_reduce_threshold:
+    # 只有单次放不下才分段；放得下就走直连（模型看得到全文，质量更高）
+    if not single_shot_fits(length):
         return _map_reduce(client, text, title, on_progress)
 
-    # 短文本 → 直接总结
     if on_progress:
         on_progress("生成总结中…")
 
@@ -450,10 +500,14 @@ def summarize_sync(
     )
 
     raw, tokens = client.complete(
-        prompt, temperature=0.4, max_tokens=summary_max_tokens(word_limit * 4)
+        prompt,
+        temperature=0.4,
+        max_tokens=summary_max_tokens(word_limit * 4, length),
     )
     return {
-        "summary": normalize_markdown_headings(strip_preamble(raw)),
+        "summary": normalize_markdown_headings(
+            _require_output(strip_preamble(raw), "总结")
+        ),
         "tokens": tokens,
         "mode": "direct",
     }
@@ -478,7 +532,7 @@ def summarize_stream(
 
     length = len(text)
 
-    if length > settings.map_reduce_threshold:
+    if not single_shot_fits(length):
         result = _map_reduce(client, text, title, on_progress)
         if usage_sink is not None:
             usage_sink.clear()
@@ -498,7 +552,7 @@ def summarize_stream(
         client.stream(
             messages,
             temperature=0.4,
-            max_tokens=summary_max_tokens(word_limit * 4),
+            max_tokens=summary_max_tokens(word_limit * 4, length),
             usage_sink=usage_sink,
         )
     )
@@ -538,7 +592,7 @@ def summarize_stream_collect(
             "通常是思考占满了 max_tokens，请调大预算或更换模型后重试"
         )
 
-    mode = "map_reduce" if len(text) > settings.map_reduce_threshold else "direct"
+    mode = "direct" if single_shot_fits(len(text)) else "map_reduce"
     # direct 模式的 token 来自 include_usage；map_reduce 由 _map_reduce 累加后写入 sink
     tokens = int(usage.get("total_tokens") or 0)
 
@@ -567,69 +621,125 @@ def _strip_preamble_stream(chunks):
         yield strip_preamble(buf)
 
 
+def _require_output(piece: str, label: str) -> str:
+    """
+    空产出检查 —— 这是本文件里最容易被忽略、后果最严重的一处。
+
+    推理模型在预算不足时会把 token 全部花在思考上，正文为 0、finish_reason=length。
+    这只是「返回值很短」，**不会抛异常**。旧代码因此把 `## 片段 3\\n`
+    （后面什么都没有）原样拼进最终汇总的输入，那一段内容就被静默丢弃了：
+    实测 13803 字的视频 3 段里有 2 段产出为空，最终总结只剩 20% 的篇幅、
+    约 94% 的内容没进总结，而用户和管理员都完全看不出来。
+
+    这里宁可直接失败（用户能重试、能换模型），也不给一份悄悄少了内容的总结。
+    """
+    body = (piece or "").strip()
+    if len(body) >= MIN_CHUNK_OUTPUT:
+        return body
+    raise AIError(
+        f"{label}没有产出内容（只返回了 {len(body)} 字），为避免总结缺失内容已中止。"
+        "通常是因为推理模型把输出预算全用在思考上，请更换非推理模型"
+        "（如 deepseek-chat）或调大预算后重试"
+    )
+
+
+def _map_one(
+    client: DeepSeekClient, chunk: str, title: str, label: str
+) -> tuple[str, int]:
+    """
+    提炼单个分段，返回 (文本, 消耗 tokens)。
+
+    预算必须跟着分段长度走：原来固定 summary_max_tokens(1500) = 5596，
+    而 6500 字的分段光思考就要 5471 个 token（实测），正文一个都分不到。
+    这里按输入长度给足；万一仍为空产出，就用接口上限再试一次。
+    """
+    prompt = CHUNK_SUMMARY_PROMPT.format(
+        text=chunk, title_line=_build_title_line(title)
+    )
+    # 分段任务是「忠实提炼」，产出通常 2000~4000 字，正文预算给足
+    budgets = (summary_max_tokens(6000, len(chunk)), MAX_TOKENS_CEILING)
+    spent = 0
+    piece = ""
+
+    for attempt, budget in enumerate(budgets):
+        last = attempt == len(budgets) - 1
+        try:
+            raw, tk = client.complete(
+                prompt,
+                system="你是一个专业的视频内容分析助手。",
+                temperature=0.3,
+                max_tokens=budget,
+            )
+        except AIError as exc:
+            if last:
+                raise
+            logger.warning("%s调用失败，用最大预算重试: %s", label, exc)
+            continue
+
+        spent += tk
+        piece = strip_preamble(raw)
+        if len(piece.strip()) >= MIN_CHUNK_OUTPUT:
+            return piece, spent
+
+        logger.warning(
+            "%s产出为空（%d 字，预算 %d），提高预算重试", label, len(piece), budget
+        )
+
+    return _require_output(piece, label), spent
+
+
 def _map_reduce(
     client: DeepSeekClient,
     text: str,
     title: str,
     on_progress=None,
 ) -> dict:
-    """Map-Reduce 总结：分段提炼 → 汇总"""
+    """Map-Reduce 总结：分段提炼 → 汇总（仅在单次放不下时才走这里）"""
     chunks = chunk_text(text)
     total = len(chunks)
     total_tokens = 0
 
     if on_progress:
-        on_progress(f"文本 {len(text)} 字，分 {total} 段处理…")
+        on_progress(f"文本 {len(text)} 字，超出单次处理能力，分 {total} 段处理…")
 
     # ─── Map ───
     chunk_summaries: list[str] = []
     for i, chunk in enumerate(chunks):
         if on_progress:
             on_progress(f"处理第 {i + 1}/{total} 段（{len(chunk)} 字）…")
-        try:
-            piece, tk = client.complete(
-                CHUNK_SUMMARY_PROMPT.format(
-                    text=chunk, title_line=_build_title_line(title)
-                ),
-                system="你是一个专业的视频内容分析助手。",
-                temperature=0.3,
-                max_tokens=summary_max_tokens(1500),
-            )
-            total_tokens += tk
-            chunk_summaries.append(f"## 片段 {i + 1}\n{strip_preamble(piece)}")
-        except AIError as exc:
-            logger.warning("第 %d 段总结失败: %s", i + 1, exc)
-            chunk_summaries.append(f"## 片段 {i + 1}\n[本段总结失败]")
+        piece, tk = _map_one(client, chunk, title, f"第 {i + 1}/{total} 段")
+        total_tokens += tk
+        chunk_summaries.append(f"## 片段 {i + 1}\n{piece}")
 
     # ─── Reduce ───
-    if len(text) > settings.hierarchical_threshold:
+    # 是否需要中间那一层「分组汇总」，同样按预算判断而不是按固定字数：
+    # 分段总结合起来如果还放得下，就直接一次性汇总（少一层压缩、少一次信息损耗）。
+    combined_raw = "\n\n".join(chunk_summaries)
+    if total > 1 and not single_shot_fits(len(combined_raw)):
         # 三级：先分组汇总，再最终汇总
         if on_progress:
-            on_progress("段数较多，先分组汇总…")
+            on_progress("分段总结合并后仍超出单次能力，先分组汇总…")
 
         batch_size = 5
         batched: list[str] = []
         for b in range(0, total, batch_size):
+            g = b // batch_size + 1
             group = "\n\n".join(chunk_summaries[b:b + batch_size])
             wl = max(500, min(int(len(group) * 0.3), 2000))
             if on_progress:
-                on_progress(f"分组汇总 {b // batch_size + 1}…")
-            try:
-                piece, tk = client.complete(
-                    FINAL_SUMMARY_PROMPT.format(
-                        text=group, word_limit=wl, title_line=_build_title_line(title)
-                    ),
-                    temperature=0.4,
-                    max_tokens=summary_max_tokens(wl * 4),
-                )
-                total_tokens += tk
-                batched.append(strip_preamble(piece))
-            except AIError as exc:
-                logger.warning("分组汇总失败: %s", exc)
-                batched.append("[分组汇总失败]")
+                on_progress(f"分组汇总 {g}…")
+            piece, tk = client.complete(
+                FINAL_SUMMARY_PROMPT.format(
+                    text=group, word_limit=wl, title_line=_build_title_line(title)
+                ),
+                temperature=0.4,
+                max_tokens=summary_max_tokens(wl * 4, len(group)),
+            )
+            total_tokens += tk
+            batched.append(_require_output(strip_preamble(piece), f"第 {g} 组汇总"))
         combined = "\n\n".join(batched)
     else:
-        combined = "\n\n".join(chunk_summaries)
+        combined = combined_raw
 
     if on_progress:
         on_progress("生成最终总结…")
@@ -640,12 +750,14 @@ def _map_reduce(
             text=combined, word_limit=word_limit, title_line=_build_title_line(title)
         ),
         temperature=0.4,
-        max_tokens=summary_max_tokens(word_limit * 4),
+        max_tokens=summary_max_tokens(word_limit * 4, len(combined)),
     )
     total_tokens += tk
 
     return {
-        "summary": normalize_markdown_headings(strip_preamble(final)),
+        "summary": normalize_markdown_headings(
+            _require_output(strip_preamble(final), "最终汇总")
+        ),
         "tokens": total_tokens,
         "mode": "map_reduce",
         "chunks": total,

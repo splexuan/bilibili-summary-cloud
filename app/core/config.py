@@ -113,8 +113,9 @@ class Settings(BaseSettings):
     ffmpeg_path: str = "ffmpeg"
 
     # ─── 业务参数（沿用本地版，勿随意改动）───
-    map_reduce_threshold: int = 12000
-    hierarchical_threshold: int = 20000
+    # 分段阈值已废弃：是否分段由「单次输出预算是否放得下」决定
+    # （见 summarizer.single_shot_fits），不再依赖固定字数。
+    # chunk_size / chunk_overlap 仍用于超出单次能力时的分段。
     chunk_size: int = 6500
     chunk_overlap: int = 600
     summary_ratio: float = 0.35
